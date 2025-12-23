@@ -115,69 +115,69 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller.animeList.length +
                     (controller.isLoading.value ? 2 : 0),
                 itemBuilder: (context, index) {
-                if (index >= controller.animeList.length) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                  if (index >= controller.animeList.length) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                final anime = controller.animeList[index];
-                return InkWell(
-                  onTap: () {
-                    Get.to(() => AnimeDetailScreen(slug: anime.slug ?? ''));
-                  },
-                  child: Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Image.network(
-                            anime.thumbnail ?? '',
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Icon(Icons.broken_image, size: 50),
+                  final anime = controller.animeList[index];
+                  return InkWell(
+                    onTap: () {
+                      Get.to(() => AnimeDetailScreen(slug: anime.slug ?? ''));
+                    },
+                    child: Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Image.network(
+                              anime.thumbnail ?? '',
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(Icons.broken_image, size: 50),
+                            ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                anime.title ?? 'Unknown',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                          Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  anime.title ?? 'Unknown',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.tv,
-                                    size: 16,
-                                    color: Colors.blue,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      '${anime.episodesSub ?? 0} eps${anime.type != null ? ' • ${anime.type}' : ''}',
-                                      style: const TextStyle(fontSize: 12),
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 1,
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.tv,
+                                      size: 16,
+                                      color: Colors.blue,
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        '${anime.episodesSub ?? 0} eps${anime.type != null ? ' • ${anime.type}' : ''}',
+                                        style: const TextStyle(fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
               ),
             ),
           ),

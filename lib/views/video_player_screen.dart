@@ -15,7 +15,7 @@ class SubtitleCue {
   final Duration start;
   final Duration end;
   final String text;
-  
+
   SubtitleCue({required this.start, required this.end, required this.text});
 }
 
@@ -47,11 +47,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   VideoPlayerController? _videoController;
   ChewieController? _chewieController;
-  
+
   // Stream data for both sub and dub
   StreamResponse? _subStreamData;
   StreamResponse? _dubStreamData;
-  
+
   // Current state
   bool _isLoading = true;
   bool _hasError = false;
@@ -70,10 +70,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Skip button visibility
   bool _showSkipIntro = false;
   bool _showSkipOutro = false;
-  
+
   // Server panel visibility
   bool _showServerPanel = false;
-  
+
   // Subtitle state
   bool _showSubtitlePanel = false;
   int _selectedSubtitleIndex = 0; // 0 = first subtitle, -1 = off
@@ -81,10 +81,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String _currentSubtitleText = '';
   bool _isLoadingSubtitles = false;
   double _subtitleSize = 18.0; // Default subtitle font size
-  
+
   // Fullscreen/orientation state
   bool _isFullscreen = true; // Start in fullscreen landscape mode
-  
+
   // Controls visibility (auto-hide in landscape)
   bool _showControls = true;
   Timer? _hideControlsTimer;
@@ -103,7 +103,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       curve: Curves.easeInOut,
     );
     _fadeController.forward();
-    
+
     // Controls fade animation
     _controlsAnimController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -117,13 +117,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Start in landscape fullscreen mode
     _enterFullscreen();
-    
+
     // Start auto-hide timer
     _startHideControlsTimer();
 
     _loadAllStreams();
   }
-  
+
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     if (_isFullscreen && !_showServerPanel && !_showSubtitlePanel) {
@@ -135,7 +135,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       });
     }
   }
-  
+
   void _toggleControlsVisibility() {
     if (_showControls) {
       // Hide controls
@@ -149,7 +149,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _startHideControlsTimer();
     }
   }
-  
+
   void _enterFullscreen() {
     setState(() {
       _isFullscreen = true;
@@ -163,7 +163,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _startHideControlsTimer();
   }
-  
+
   void _exitFullscreen() {
     _hideControlsTimer?.cancel();
     setState(() {
@@ -171,12 +171,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _showControls = true; // Always show controls in portrait
     });
     _controlsAnimController.forward();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
-  
+
   void _toggleFullscreen() {
     if (_isFullscreen) {
       _exitFullscreen();
@@ -194,32 +192,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     });
 
     try {
-      logger.i('VideoPlayerScreen', 'Loading all streams for episode: ${widget.episodeId}');
+      logger.i(
+        'VideoPlayerScreen',
+        'Loading all streams for episode: ${widget.episodeId}',
+      );
 
       // Load SUB and DUB streams in parallel
       final results = await Future.wait([
-        _apiService.getStreamingLinks(
-          episodeId: widget.episodeId,
-          serverType: 'sub',
-          includeProxy: true,
-        ).catchError((e) => StreamResponse(
-          success: false,
-          episodeId: widget.episodeId,
-          serverType: 'sub',
-          totalStreams: 0,
-          streams: [],
-        )),
-        _apiService.getStreamingLinks(
-          episodeId: widget.episodeId,
-          serverType: 'dub',
-          includeProxy: true,
-        ).catchError((e) => StreamResponse(
-          success: false,
-          episodeId: widget.episodeId,
-          serverType: 'dub',
-          totalStreams: 0,
-          streams: [],
-        )),
+        _apiService
+            .getStreamingLinks(
+              episodeId: widget.episodeId,
+              serverType: 'sub',
+              includeProxy: true,
+            )
+            .catchError(
+              (e) => StreamResponse(
+                success: false,
+                episodeId: widget.episodeId,
+                serverType: 'sub',
+                totalStreams: 0,
+                streams: [],
+              ),
+            ),
+        _apiService
+            .getStreamingLinks(
+              episodeId: widget.episodeId,
+              serverType: 'dub',
+              includeProxy: true,
+            )
+            .catchError(
+              (e) => StreamResponse(
+                success: false,
+                episodeId: widget.episodeId,
+                serverType: 'dub',
+                totalStreams: 0,
+                streams: [],
+              ),
+            ),
       ]);
 
       _subStreamData = results[0];
@@ -229,9 +238,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       final currentStreams = _getCurrentStreams();
       if (currentStreams.isEmpty) {
         // Try the other type
-        if (_selectedServerType == 'sub' && _dubStreamData!.streams.isNotEmpty) {
+        if (_selectedServerType == 'sub' &&
+            _dubStreamData!.streams.isNotEmpty) {
           _selectedServerType = 'dub';
-        } else if (_selectedServerType == 'dub' && _subStreamData!.streams.isNotEmpty) {
+        } else if (_selectedServerType == 'dub' &&
+            _subStreamData!.streams.isNotEmpty) {
           _selectedServerType = 'sub';
         } else {
           throw Exception('No streams available for this episode');
@@ -240,7 +251,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       await _initializePlayer();
     } catch (e, stackTrace) {
-      logger.e('VideoPlayerScreen', 'Failed to load streams', error: e, stackTrace: stackTrace);
+      logger.e(
+        'VideoPlayerScreen',
+        'Failed to load streams',
+        error: e,
+        stackTrace: stackTrace,
+      );
       setState(() {
         _hasError = true;
         _errorMessage = e.toString();
@@ -280,10 +296,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Build list of URLs to try in order
     List<Map<String, dynamic>> urlsToTry = [];
-    
+
     for (int i = _currentSourceIndex; i < stream.sources.length; i++) {
       final source = stream.sources[i];
-      
+
       // Try 1: Direct URL with headers (often works better on iOS)
       if (source.file.isNotEmpty) {
         urlsToTry.add({
@@ -293,7 +309,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           'sourceIndex': i,
         });
       }
-      
+
       // Try 2: Proxy URL (no headers)
       if (source.proxyUrl != null && source.proxyUrl!.isNotEmpty) {
         urlsToTry.add({
@@ -345,7 +361,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             backgroundColor: Colors.grey.shade800,
             bufferedColor: OnePieceTheme.strawHatRed.withAlpha(76),
           ),
-          errorBuilder: (context, errorMessage) => _buildInlineError(errorMessage),
+          errorBuilder: (context, errorMessage) =>
+              _buildInlineError(errorMessage),
         );
 
         // Listen for position changes to show skip buttons
@@ -355,14 +372,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _isLoading = false;
           _currentSourceIndex = sourceIndex;
         });
-        
+
         // Auto-load subtitles if available
         final currentStream = _getCurrentStream();
-        if (currentStream != null && currentStream.subtitles.isNotEmpty && _selectedSubtitleIndex >= 0) {
+        if (currentStream != null &&
+            currentStream.subtitles.isNotEmpty &&
+            _selectedSubtitleIndex >= 0) {
           _loadSubtitles();
         }
-        
-        logger.i('VideoPlayerScreen', 'Successfully initialized with $description');
+
+        logger.i(
+          'VideoPlayerScreen',
+          'Successfully initialized with $description',
+        );
         return;
       } catch (e) {
         logger.w('VideoPlayerScreen', 'Failed with $description: $e');
@@ -378,7 +400,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     } else {
       setState(() {
         _hasError = true;
-        _errorMessage = 'All video sources failed. Please try a different server.';
+        _errorMessage =
+            'All video sources failed. Please try a different server.';
         _isLoading = false;
         _isRetrying = false;
       });
@@ -388,7 +411,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _tryNextServer() async {
     final streams = _getCurrentStreams();
     final nextIndex = _selectedServerIndex + 1;
-    
+
     if (nextIndex < streams.length) {
       logger.i('VideoPlayerScreen', 'Trying next server: $nextIndex');
       setState(() {
@@ -399,10 +422,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     } else {
       // Try switching to other audio type
       final otherType = _selectedServerType == 'sub' ? 'dub' : 'sub';
-      final otherStreams = otherType == 'sub' 
+      final otherStreams = otherType == 'sub'
           ? _subStreamData?.streams ?? []
           : _dubStreamData?.streams ?? [];
-      
+
       if (otherStreams.isNotEmpty) {
         logger.i('VideoPlayerScreen', 'Trying $otherType streams');
         setState(() {
@@ -433,7 +456,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final skips = stream.skips;
     if (skips != null) {
       if (skips.intro != null) {
-        final showIntro = positionSeconds >= skips.intro!.start && positionSeconds < skips.intro!.end;
+        final showIntro =
+            positionSeconds >= skips.intro!.start &&
+            positionSeconds < skips.intro!.end;
         if (showIntro != _showSkipIntro) {
           setState(() => _showSkipIntro = showIntro);
         }
@@ -441,13 +466,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       // Check outro skip
       if (skips.outro != null) {
-        final showOutro = positionSeconds >= skips.outro!.start && positionSeconds < skips.outro!.end;
+        final showOutro =
+            positionSeconds >= skips.outro!.start &&
+            positionSeconds < skips.outro!.end;
         if (showOutro != _showSkipOutro) {
           setState(() => _showSkipOutro = showOutro);
         }
       }
     }
-    
+
     // Update current subtitle
     if (_selectedSubtitleIndex >= 0 && _subtitleCues.isNotEmpty) {
       String newText = '';
@@ -476,7 +503,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _videoController?.seekTo(Duration(seconds: skips!.outro!.end));
     }
   }
-  
+
   /// Load and parse subtitles for the selected subtitle index
   Future<void> _loadSubtitles() async {
     final stream = _getCurrentStream();
@@ -487,23 +514,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       });
       return;
     }
-    
+
     final subtitles = stream.subtitles;
     if (_selectedSubtitleIndex >= subtitles.length) {
       return;
     }
-    
+
     final subtitle = subtitles[_selectedSubtitleIndex];
     final url = subtitle.file;
-    
+
     if (url.isEmpty) return;
-    
+
     setState(() => _isLoadingSubtitles = true);
-    
+
     try {
       logger.d('VideoPlayerScreen', 'Loading subtitles from: $url');
       final response = await http.get(Uri.parse(url));
-      
+
       if (response.statusCode == 200) {
         final content = response.body;
         final cues = _parseVttContent(content);
@@ -513,7 +540,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         });
         logger.i('VideoPlayerScreen', 'Loaded ${cues.length} subtitle cues');
       } else {
-        logger.w('VideoPlayerScreen', 'Failed to load subtitles: ${response.statusCode}');
+        logger.w(
+          'VideoPlayerScreen',
+          'Failed to load subtitles: ${response.statusCode}',
+        );
         setState(() => _isLoadingSubtitles = false);
       }
     } catch (e) {
@@ -521,21 +551,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       setState(() => _isLoadingSubtitles = false);
     }
   }
-  
+
   /// Parse VTT/SRT subtitle content into cues
   List<SubtitleCue> _parseVttContent(String content) {
     final List<SubtitleCue> cues = [];
-    
+
     // Split into blocks
     final blocks = content.split(RegExp(r'\n\s*\n'));
-    
+
     for (final block in blocks) {
       final lines = block.trim().split('\n');
       if (lines.isEmpty) continue;
-      
+
       // Skip WEBVTT header and metadata
-      if (lines[0].startsWith('WEBVTT') || lines[0].startsWith('NOTE')) continue;
-      
+      if (lines[0].startsWith('WEBVTT') || lines[0].startsWith('NOTE'))
+        continue;
+
       // Find timing line (contains -->)
       int timingLineIndex = -1;
       for (int i = 0; i < lines.length; i++) {
@@ -544,49 +575,51 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           break;
         }
       }
-      
+
       if (timingLineIndex == -1) continue;
-      
+
       // Parse timing
       final timingLine = lines[timingLineIndex];
       final timingParts = timingLine.split('-->');
       if (timingParts.length != 2) continue;
-      
+
       final start = _parseTimestamp(timingParts[0].trim());
-      final end = _parseTimestamp(timingParts[1].trim().split(' ')[0]); // Remove position info
-      
+      final end = _parseTimestamp(
+        timingParts[1].trim().split(' ')[0],
+      ); // Remove position info
+
       if (start == null || end == null) continue;
-      
+
       // Get text (all lines after timing)
       final textLines = lines.sublist(timingLineIndex + 1);
       if (textLines.isEmpty) continue;
-      
+
       // Join text lines and clean HTML tags
       String text = textLines.join('\n');
       text = text.replaceAll(RegExp(r'<[^>]*>'), ''); // Remove HTML tags
       text = text.trim();
-      
+
       if (text.isNotEmpty) {
         cues.add(SubtitleCue(start: start, end: end, text: text));
       }
     }
-    
+
     return cues;
   }
-  
+
   /// Parse VTT/SRT timestamp to Duration
   Duration? _parseTimestamp(String timestamp) {
     try {
       // Handle both VTT (00:00:00.000) and SRT (00:00:00,000) formats
       timestamp = timestamp.replaceAll(',', '.');
-      
+
       final parts = timestamp.split(':');
       if (parts.length < 2) return null;
-      
+
       int hours = 0;
       int minutes = 0;
       double seconds = 0;
-      
+
       if (parts.length == 3) {
         hours = int.parse(parts[0]);
         minutes = int.parse(parts[1]);
@@ -595,7 +628,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         minutes = int.parse(parts[0]);
         seconds = double.parse(parts[1]);
       }
-      
+
       return Duration(
         hours: hours,
         minutes: minutes,
@@ -651,11 +684,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ? Image.network(
                 widget.animeThumbnail!,
                 fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) => const Icon(
-                  Icons.movie,
-                  size: 80,
-                  color: Colors.white30,
-                ),
+                errorBuilder: (context, error, stackTrace) =>
+                    const Icon(Icons.movie, size: 80, color: Colors.white30),
               )
             : const Icon(Icons.movie, size: 80, color: Colors.white30),
       ),
@@ -664,14 +694,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   Widget _buildInlineError(String message) {
     final hasStream = _getCurrentStream() != null;
-    
+
     return Container(
       color: Colors.black,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: OnePieceTheme.strawHatRed),
+            const Icon(
+              Icons.error_outline,
+              size: 48,
+              color: OnePieceTheme.strawHatRed,
+            ),
             const SizedBox(height: 12),
             Text(
               message,
@@ -750,7 +784,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                             Chewie(controller: _chewieController!),
 
                           // Subtitle Overlay (always visible)
-                          if (!_isLoading && !_hasError && _selectedSubtitleIndex >= 0)
+                          if (!_isLoading &&
+                              !_hasError &&
+                              _selectedSubtitleIndex >= 0)
                             _buildSubtitleOverlay(),
 
                           // Skip Buttons Overlay (always visible)
@@ -788,7 +824,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
               // Server Selection Panel (Overlay)
               if (_showServerPanel) _buildServerPanel(),
-              
+
               // Subtitle Selection Panel (Overlay)
               if (_showSubtitlePanel) _buildSubtitlePanel(),
             ],
@@ -851,7 +887,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget _buildErrorState() {
     final stream = _getCurrentStream();
     final hasVideoUrl = stream != null && stream.sources.isNotEmpty;
-    
+
     return Container(
       color: Colors.black,
       padding: const EdgeInsets.all(32),
@@ -889,7 +925,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 24),
-            
+
             // Primary action buttons
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -915,7 +951,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ],
             ),
-            
+
             // WebView fallback button
             if (hasVideoUrl) ...[
               const SizedBox(height: 16),
@@ -944,41 +980,51 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       ),
     );
   }
-  
+
   void _openWebViewPlayer() {
     final stream = _getCurrentStream();
     if (stream == null || stream.sources.isEmpty) return;
-    
+
     final source = stream.sources.first;
     String videoUrl = source.file;
-    
+
     // Prefer proxy URL for WebView too (avoids CORS)
     if (source.proxyUrl != null && source.proxyUrl!.isNotEmpty) {
       videoUrl = '${_apiService.baseUrl}${source.proxyUrl}';
     }
-    
+
     // Get skip times
     Map<String, int>? introSkip;
     Map<String, int>? outroSkip;
-    
+
     if (stream.skips?.intro != null) {
-      introSkip = {'start': stream.skips!.intro!.start, 'end': stream.skips!.intro!.end};
+      introSkip = {
+        'start': stream.skips!.intro!.start,
+        'end': stream.skips!.intro!.end,
+      };
     }
     if (stream.skips?.outro != null) {
-      outroSkip = {'start': stream.skips!.outro!.start, 'end': stream.skips!.outro!.end};
+      outroSkip = {
+        'start': stream.skips!.outro!.start,
+        'end': stream.skips!.outro!.end,
+      };
     }
-    
+
     // Collect subtitles
     List<Map<String, String>>? subtitles;
     if (stream.subtitles.isNotEmpty) {
-      subtitles = stream.subtitles.map((sub) => {
-        'url': sub.file,
-        'label': sub.label,
-        'kind': sub.kind,
-        'lang': sub.label.toLowerCase().contains('english') ? 'en' : 'ja',
-      }).toList();
+      subtitles = stream.subtitles
+          .map(
+            (sub) => {
+              'url': sub.file,
+              'label': sub.label,
+              'kind': sub.kind,
+              'lang': sub.label.toLowerCase().contains('english') ? 'en' : 'ja',
+            },
+          )
+          .toList();
     }
-    
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1005,10 +1051,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withAlpha(204),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withAlpha(204), Colors.transparent],
           ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1018,7 +1061,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               icon: const Icon(Icons.arrow_back, color: Colors.white),
               onPressed: () {
                 // Reset to portrait before leaving
-                SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+                SystemChrome.setPreferredOrientations([
+                  DeviceOrientation.portraitUp,
+                ]);
                 SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 Navigator.pop(context);
               },
@@ -1040,7 +1085,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       overflow: TextOverflow.ellipsis,
                     ),
                   Text(
-                    widget.episodeTitle ?? 'Episode ${widget.episodeNumber ?? ''}',
+                    widget.episodeTitle ??
+                        'Episode ${widget.episodeNumber ?? ''}',
                     style: const TextStyle(
                       color: OnePieceTheme.strawHatGold,
                       fontSize: 12,
@@ -1142,17 +1188,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   _showSubtitlePanel = !_showSubtitlePanel;
                   _showServerPanel = false;
                 });
-                _hideControlsTimer?.cancel(); // Keep controls visible while panel is open
+                _hideControlsTimer
+                    ?.cancel(); // Keep controls visible while panel is open
               },
               icon: Icon(
                 Icons.closed_caption,
                 size: 18,
-                color: _selectedSubtitleIndex >= 0 ? OnePieceTheme.strawHatGold : Colors.white54,
+                color: _selectedSubtitleIndex >= 0
+                    ? OnePieceTheme.strawHatGold
+                    : Colors.white54,
               ),
               label: Text(
                 'CC',
                 style: TextStyle(
-                  color: _selectedSubtitleIndex >= 0 ? OnePieceTheme.strawHatGold : Colors.white54,
+                  color: _selectedSubtitleIndex >= 0
+                      ? OnePieceTheme.strawHatGold
+                      : Colors.white54,
                 ),
               ),
               style: TextButton.styleFrom(
@@ -1166,7 +1217,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 _showServerPanel = !_showServerPanel;
                 _showSubtitlePanel = false;
               });
-              _hideControlsTimer?.cancel(); // Keep controls visible while panel is open
+              _hideControlsTimer
+                  ?.cancel(); // Keep controls visible while panel is open
             },
             icon: Icon(
               _showServerPanel ? Icons.expand_more : Icons.expand_less,
@@ -1181,13 +1233,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       ),
     );
   }
-  
+
   Widget _buildSubtitlePanel() {
     final stream = _getCurrentStream();
     final subtitles = stream?.subtitles ?? [];
-    
+
     if (subtitles.isEmpty) return const SizedBox.shrink();
-    
+
     return Positioned(
       bottom: 60,
       left: 0,
@@ -1239,7 +1291,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white54,
+                        size: 20,
+                      ),
                       onPressed: () {
                         setState(() => _showSubtitlePanel = false);
                         _startHideControlsTimer();
@@ -1258,7 +1314,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     children: [
                       // Size customization
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         margin: const EdgeInsets.only(bottom: 12),
                         decoration: BoxDecoration(
                           color: Colors.white.withAlpha(13),
@@ -1298,9 +1357,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                                 activeTrackColor: OnePieceTheme.strawHatRed,
                                 inactiveTrackColor: Colors.white24,
                                 thumbColor: OnePieceTheme.strawHatGold,
-                                overlayColor: OnePieceTheme.strawHatGold.withAlpha(30),
+                                overlayColor: OnePieceTheme.strawHatGold
+                                    .withAlpha(30),
                                 trackHeight: 3,
-                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 6,
+                                ),
                               ),
                               child: Slider(
                                 value: _subtitleSize,
@@ -1359,7 +1421,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       ),
     );
   }
-  
+
   Widget _buildSubtitleOption({
     required String label,
     required bool isSelected,
@@ -1376,9 +1438,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               : Colors.white.withAlpha(13),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected
-                ? OnePieceTheme.strawHatRed
-                : Colors.transparent,
+            color: isSelected ? OnePieceTheme.strawHatRed : Colors.transparent,
           ),
         ),
         child: Row(
@@ -1404,7 +1464,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       ),
     );
   }
-  
+
   Widget _buildSubtitleOverlay() {
     if (_isLoadingSubtitles) {
       return Positioned(
@@ -1426,7 +1486,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(OnePieceTheme.strawHatGold),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      OnePieceTheme.strawHatGold,
+                    ),
                   ),
                 ),
                 SizedBox(width: 8),
@@ -1440,11 +1502,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       );
     }
-    
+
     if (_currentSubtitleText.isEmpty) {
       return const SizedBox.shrink();
     }
-    
+
     return Positioned(
       bottom: 80,
       left: 0,
@@ -1533,7 +1595,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white54,
+                        size: 20,
+                      ),
                       onPressed: () => setState(() => _showServerPanel = false),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -1541,7 +1607,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ],
                 ),
               ),
-              
+
               // Server lists
               Flexible(
                 child: SingleChildScrollView(
@@ -1550,17 +1616,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // SUB Servers
-                      if (_subStreamData != null && _subStreamData!.streams.isNotEmpty) ...[
-                        _buildServerSection('SUB', 'sub', _subStreamData!.streams),
+                      if (_subStreamData != null &&
+                          _subStreamData!.streams.isNotEmpty) ...[
+                        _buildServerSection(
+                          'SUB',
+                          'sub',
+                          _subStreamData!.streams,
+                        ),
                         const SizedBox(height: 16),
                       ],
-                      
+
                       // DUB Servers
-                      if (_dubStreamData != null && _dubStreamData!.streams.isNotEmpty)
-                        _buildServerSection('DUB', 'dub', _dubStreamData!.streams),
-                      
+                      if (_dubStreamData != null &&
+                          _dubStreamData!.streams.isNotEmpty)
+                        _buildServerSection(
+                          'DUB',
+                          'dub',
+                          _dubStreamData!.streams,
+                        ),
+
                       // No servers message
-                      if ((_subStreamData?.streams.isEmpty ?? true) && 
+                      if ((_subStreamData?.streams.isEmpty ?? true) &&
                           (_dubStreamData?.streams.isEmpty ?? true))
                         const Center(
                           child: Padding(
@@ -1582,7 +1658,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  Widget _buildServerSection(String label, String type, List<StreamData> streams) {
+  Widget _buildServerSection(
+    String label,
+    String type,
+    List<StreamData> streams,
+  ) {
     final isCurrentType = _selectedServerType == type;
 
     return Column(
@@ -1594,8 +1674,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: isCurrentType 
-                    ? OnePieceTheme.strawHatRed 
+                color: isCurrentType
+                    ? OnePieceTheme.strawHatRed
                     : Colors.white.withAlpha(25),
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -1630,7 +1710,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ],
         ),
         const SizedBox(height: 10),
-        
+
         // Server chips
         Wrap(
           spacing: 8,
@@ -1646,7 +1726,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 borderRadius: BorderRadius.circular(10),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: isSelected
                         ? OnePieceTheme.strawHatRed
@@ -1663,7 +1746,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        isSelected ? Icons.check_circle : Icons.play_circle_outline,
+                        isSelected
+                            ? Icons.check_circle
+                            : Icons.play_circle_outline,
                         size: 16,
                         color: isSelected ? Colors.white : Colors.white70,
                       ),
@@ -1673,13 +1758,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                         style: TextStyle(
                           color: isSelected ? Colors.white : Colors.white70,
                           fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                         ),
                       ),
-                      if (stream.sources.isNotEmpty && stream.sources.first.quality != 'auto') ...[
+                      if (stream.sources.isNotEmpty &&
+                          stream.sources.first.quality != 'auto') ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.white.withAlpha(25),
                             borderRadius: BorderRadius.circular(4),

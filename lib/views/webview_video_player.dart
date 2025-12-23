@@ -37,7 +37,7 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
   @override
   void initState() {
     super.initState();
-    
+
     // Set landscape orientation
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -81,7 +81,8 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
     if (widget.introSkip != null) {
       final start = widget.introSkip!['start'] ?? 0;
       final end = widget.introSkip!['end'] ?? 0;
-      skipIntroJs = '''
+      skipIntroJs =
+          '''
         var introStart = $start;
         var introEnd = $end;
         var skipIntroBtn = document.getElementById('skipIntro');
@@ -96,13 +97,15 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
           video.currentTime = introEnd;
         });
       ''';
-      skipButtonsHtml += '<button id="skipIntro" class="skip-btn" style="display:none;">Skip Intro</button>';
+      skipButtonsHtml +=
+          '<button id="skipIntro" class="skip-btn" style="display:none;">Skip Intro</button>';
     }
 
     if (widget.outroSkip != null) {
       final start = widget.outroSkip!['start'] ?? 0;
       final end = widget.outroSkip!['end'] ?? 0;
-      skipOutroJs = '''
+      skipOutroJs =
+          '''
         var outroStart = $start;
         var outroEnd = $end;
         var skipOutroBtn = document.getElementById('skipOutro');
@@ -117,14 +120,15 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
           video.currentTime = outroEnd;
         });
       ''';
-      skipButtonsHtml += '<button id="skipOutro" class="skip-btn" style="display:none;">Skip Outro</button>';
+      skipButtonsHtml +=
+          '<button id="skipOutro" class="skip-btn" style="display:none;">Skip Outro</button>';
     }
 
     // Build subtitle tracks HTML and options
     String subtitleTracksHtml = '';
     String subtitleOptionsHtml = '<option value="-1">Off</option>';
     String subtitlesArrayJs = '[]';
-    
+
     if (widget.subtitles != null && widget.subtitles!.isNotEmpty) {
       List<String> subsJson = [];
       int index = 0;
@@ -133,15 +137,17 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
         final label = sub['label'] ?? 'Unknown';
         final kind = sub['kind'] ?? 'subtitles';
         final lang = sub['lang'] ?? 'en';
-        
+
         // Add track element
         final defaultAttr = index == 0 ? 'default' : '';
-        subtitleTracksHtml += '<track kind="$kind" src="$url" srclang="$lang" label="$label" $defaultAttr>';
-        
+        subtitleTracksHtml +=
+            '<track kind="$kind" src="$url" srclang="$lang" label="$label" $defaultAttr>';
+
         // Add option for selector
         final selected = index == 0 ? 'selected' : '';
-        subtitleOptionsHtml += '<option value="$index" $selected>$label</option>';
-        
+        subtitleOptionsHtml +=
+            '<option value="$index" $selected>$label</option>';
+
         subsJson.add('{"url": "$url", "label": "$label"}');
         index++;
       }
@@ -368,10 +374,7 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withAlpha(204),
-                      Colors.transparent,
-                    ],
+                    colors: [Colors.black.withAlpha(204), Colors.transparent],
                   ),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -398,7 +401,8 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           Text(
-                            widget.episodeTitle ?? 'Episode ${widget.episodeNumber ?? ''}',
+                            widget.episodeTitle ??
+                                'Episode ${widget.episodeNumber ?? ''}',
                             style: const TextStyle(
                               color: OnePieceTheme.strawHatGold,
                               fontSize: 12,
@@ -410,7 +414,10 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.blue.withAlpha(179),
                         borderRadius: BorderRadius.circular(8),
@@ -441,10 +448,12 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
             if (_isLoading)
               const Center(
                 child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(OnePieceTheme.strawHatRed),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    OnePieceTheme.strawHatRed,
+                  ),
                 ),
               ),
-            
+
             // Error indicator
             if (_hasError)
               Center(

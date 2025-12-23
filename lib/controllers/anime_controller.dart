@@ -49,7 +49,11 @@ class AnimeController extends GetxController {
   }
 
   // Search anime
-  Future<void> searchAnime(String keyword, {bool loadMore = false, bool refresh = false}) async {
+  Future<void> searchAnime(
+    String keyword, {
+    bool loadMore = false,
+    bool refresh = false,
+  }) async {
     logger.logUserAction(
       'Search anime',
       details: {'keyword': keyword, 'loadMore': loadMore, 'refresh': refresh},
@@ -108,8 +112,14 @@ class AnimeController extends GetxController {
   }
 
   // Get popular anime
-  Future<void> getPopularAnime({bool loadMore = false, bool refresh = false}) async {
-    logger.logUserAction('Get popular anime', details: {'loadMore': loadMore, 'refresh': refresh});
+  Future<void> getPopularAnime({
+    bool loadMore = false,
+    bool refresh = false,
+  }) async {
+    logger.logUserAction(
+      'Get popular anime',
+      details: {'loadMore': loadMore, 'refresh': refresh},
+    );
 
     if (loadMore && !refresh) {
       if (isLoading.value) {
@@ -161,7 +171,10 @@ class AnimeController extends GetxController {
   }
 
   // Get top airing anime (trending)
-  Future<void> getTopAiring({bool loadMore = false, bool refresh = false}) async {
+  Future<void> getTopAiring({
+    bool loadMore = false,
+    bool refresh = false,
+  }) async {
     logger.logUserAction(
       'Get top airing anime',
       details: {'loadMore': loadMore, 'refresh': refresh},

@@ -7,11 +7,11 @@ class EpisodeModel {
   final int? number;
   final String? title;
   final String? url;
-  
+
   // Support both 'id' and 'episode_id' from API
   @JsonKey(name: 'episode_id', defaultValue: null)
   final String? episodeId;
-  
+
   // Also keep 'id' field for backwards compatibility
   final String? id;
 
