@@ -49,13 +49,13 @@ class AnimeController extends GetxController {
   }
 
   // Search anime
-  Future<void> searchAnime(String keyword, {bool loadMore = false}) async {
+  Future<void> searchAnime(String keyword, {bool loadMore = false, bool refresh = false}) async {
     logger.logUserAction(
       'Search anime',
-      details: {'keyword': keyword, 'loadMore': loadMore},
+      details: {'keyword': keyword, 'loadMore': loadMore, 'refresh': refresh},
     );
 
-    if (loadMore) {
+    if (loadMore && !refresh) {
       if (isLoading.value) {
         logger.d(_tag, 'Search skipped - already loading');
         return;
@@ -108,10 +108,10 @@ class AnimeController extends GetxController {
   }
 
   // Get popular anime
-  Future<void> getPopularAnime({bool loadMore = false}) async {
-    logger.logUserAction('Get popular anime', details: {'loadMore': loadMore});
+  Future<void> getPopularAnime({bool loadMore = false, bool refresh = false}) async {
+    logger.logUserAction('Get popular anime', details: {'loadMore': loadMore, 'refresh': refresh});
 
-    if (loadMore) {
+    if (loadMore && !refresh) {
       if (isLoading.value) {
         logger.d(_tag, 'Load more skipped - already loading');
         return;
@@ -161,13 +161,13 @@ class AnimeController extends GetxController {
   }
 
   // Get top airing anime (trending)
-  Future<void> getTopAiring({bool loadMore = false}) async {
+  Future<void> getTopAiring({bool loadMore = false, bool refresh = false}) async {
     logger.logUserAction(
       'Get top airing anime',
-      details: {'loadMore': loadMore},
+      details: {'loadMore': loadMore, 'refresh': refresh},
     );
 
-    if (loadMore) {
+    if (loadMore && !refresh) {
       if (isLoading.value) {
         logger.d(_tag, 'Load more skipped - already loading');
         return;

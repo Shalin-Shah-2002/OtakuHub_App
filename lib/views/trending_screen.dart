@@ -95,24 +95,29 @@ class _TrendingScreenState extends State<TrendingScreen> {
             ),
           ),
           Expanded(
-            child: GridView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.7,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount:
-                  controller.animeList.length +
-                  (controller.isLoading.value ? 2 : 0),
-              itemBuilder: (context, index) {
-                if (index >= controller.animeList.length) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await controller.getTopAiring(refresh: true);
+              },
+              color: OnePieceTheme.treasureGold,
+              child: GridView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(8),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 0.7,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                ),
+                itemCount:
+                    controller.animeList.length +
+                    (controller.isLoading.value ? 2 : 0),
+                itemBuilder: (context, index) {
+                  if (index >= controller.animeList.length) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                final anime = controller.animeList[index];
+                  final anime = controller.animeList[index];
                 return InkWell(
                   onTap: () {
                     Get.to(() => AnimeDetailScreen(slug: anime.slug ?? ''));
@@ -209,6 +214,7 @@ class _TrendingScreenState extends State<TrendingScreen> {
                   ),
                 );
               },
+              ),
             ),
           ),
         ],

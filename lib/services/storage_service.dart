@@ -36,6 +36,13 @@ class StorageService extends GetxService {
     return this;
   }
 
+  /// Refresh all data from storage (for pull-to-refresh)
+  Future<void> refreshData() async {
+    logger.d(_tag, 'Refreshing data from storage');
+    await _loadWatchlist();
+    await _loadWatchHistory();
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // WATCHLIST METHODS
   // ════════════════════════════════════════════════════════════════════════════

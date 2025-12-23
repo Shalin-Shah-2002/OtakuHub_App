@@ -5,6 +5,7 @@ import '../models/response/episode_model.dart';
 import '../services/storage_service.dart';
 import '../utils/logger_service.dart';
 import '../utils/one_piece_theme.dart';
+import 'stream_options_sheet.dart';
 
 class AnimeDetailScreen extends StatefulWidget {
   final String slug;
@@ -45,8 +46,16 @@ class _AnimeDetailScreenState extends State<AnimeDetailScreen> {
       return;
     }
 
-    // Play episode and add to history
-    storageService.playEpisode(anime: anime, episode: episode);
+    // Show stream options sheet
+    StreamOptionsSheet.show(
+      context: context,
+      episode: episode,
+      anime: anime,
+      onOpenInBrowser: () {
+        // Add to history and open in browser (existing behavior)
+        storageService.playEpisode(anime: anime, episode: episode);
+      },
+    );
   }
 
   void _showEpisodeLinkDialog(EpisodeModel episode) {

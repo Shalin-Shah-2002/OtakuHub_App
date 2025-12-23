@@ -97,19 +97,24 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           Expanded(
-            child: GridView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.7,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount:
-                  controller.animeList.length +
-                  (controller.isLoading.value ? 2 : 0),
-              itemBuilder: (context, index) {
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await controller.getPopularAnime(refresh: true);
+              },
+              color: OnePieceTheme.strawHatRed,
+              child: GridView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(8),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 0.7,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                ),
+                itemCount:
+                    controller.animeList.length +
+                    (controller.isLoading.value ? 2 : 0),
+                itemBuilder: (context, index) {
                 if (index >= controller.animeList.length) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -173,6 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 );
               },
+              ),
             ),
           ),
         ],

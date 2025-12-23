@@ -121,19 +121,27 @@ class _SearchScreenState extends State<SearchScreen> {
               );
             }
 
-            return GridView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.7,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount:
-                  controller.animeList.length +
-                  (controller.isLoading.value ? 2 : 0),
-              itemBuilder: (context, index) {
+            return RefreshIndicator(
+              onRefresh: () async {
+                final query = _searchController.text.trim();
+                if (query.isNotEmpty) {
+                  await controller.searchAnime(query, refresh: true);
+                }
+              },
+              color: OnePieceTheme.grandLineBlue,
+              child: GridView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(8),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 0.7,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                ),
+                itemCount:
+                    controller.animeList.length +
+                    (controller.isLoading.value ? 2 : 0),
+                itemBuilder: (context, index) {
                 if (index >= controller.animeList.length) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -197,6 +205,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                 );
               },
+              ),
             );
           }),
         ),

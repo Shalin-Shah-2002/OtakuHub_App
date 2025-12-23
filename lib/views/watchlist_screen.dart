@@ -63,38 +63,6 @@ class WatchlistScreen extends StatelessWidget {
       ),
     );
   }
-
-  void _showClearConfirmation(
-    BuildContext context,
-    String title,
-    String message,
-    VoidCallback onConfirm,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              onConfirm();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Clear'),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _WatchlistTab extends StatelessWidget {
@@ -128,12 +96,18 @@ class _WatchlistTab extends StatelessWidget {
         );
       }
 
-      return ListView.builder(
-        padding: const EdgeInsets.all(8),
-        itemCount: storageService.watchlist.length,
-        itemBuilder: (context, index) {
-          final item = storageService.watchlist[index];
-          return Dismissible(
+      return RefreshIndicator(
+        onRefresh: () async {
+          // Trigger a refresh of the watchlist
+          await storageService.refreshData();
+        },
+        color: OnePieceTheme.strawHatRed,
+        child: ListView.builder(
+          padding: const EdgeInsets.all(8),
+          itemCount: storageService.watchlist.length,
+          itemBuilder: (context, index) {
+            final item = storageService.watchlist[index];
+            return Dismissible(
             key: Key(item.slug),
             direction: DismissDirection.endToStart,
             background: Container(
@@ -185,6 +159,7 @@ class _WatchlistTab extends StatelessWidget {
             ),
           );
         },
+        ),
       );
     });
   }
@@ -221,12 +196,18 @@ class _WatchHistoryTab extends StatelessWidget {
         );
       }
 
-      return ListView.builder(
-        padding: const EdgeInsets.all(8),
-        itemCount: storageService.watchHistory.length,
-        itemBuilder: (context, index) {
-          final item = storageService.watchHistory[index];
-          final timeAgo = _getTimeAgo(item.watchedAt);
+      return RefreshIndicator(
+        onRefresh: () async {
+          // Trigger a refresh of the watch history
+          await storageService.refreshData();
+        },
+        color: OnePieceTheme.strawHatRed,
+        child: ListView.builder(
+          padding: const EdgeInsets.all(8),
+          itemCount: storageService.watchHistory.length,
+          itemBuilder: (context, index) {
+            final item = storageService.watchHistory[index];
+            final timeAgo = _getTimeAgo(item.watchedAt);
 
           return Card(
             child: ListTile(
@@ -315,6 +296,7 @@ class _WatchHistoryTab extends StatelessWidget {
             ),
           );
         },
+        ),
       );
     });
   }

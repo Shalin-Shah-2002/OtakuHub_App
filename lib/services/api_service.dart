@@ -6,6 +6,7 @@ import '../models/request/get_episodes_request.dart';
 import '../models/response/anime_list_response.dart';
 import '../models/response/episode_list_response.dart';
 import '../models/response/anime_model.dart';
+import '../models/response/stream_response.dart';
 import '../utils/logger_service.dart';
 import 'storage_service.dart';
 
@@ -187,6 +188,32 @@ class ApiService {
       method: 'GET',
       uri: uri,
       parser: (json) => AnimeListResponse.fromJson(json),
+    );
+  }
+
+  /// Get streaming links for an episode
+  ///
+  /// [episodeId] - Episode ID from the URL (e.g., "2142")
+  /// [serverType] - "sub", "dub", or "all"
+  /// [includeProxy] - Set true if direct URLs don't work
+  Future<StreamResponse> getStreamingLinks({
+    required String episodeId,
+    String serverType = 'sub',
+    bool includeProxy = true,
+  }) async {
+    logger.i(_tag, 'Getting streaming links for episode: $episodeId');
+
+    final uri = Uri.parse('$baseUrl/api/stream/$episodeId').replace(
+      queryParameters: {
+        'server_type': serverType,
+        'include_proxy_url': includeProxy.toString(),
+      },
+    );
+
+    return _executeRequest(
+      method: 'GET',
+      uri: uri,
+      parser: (json) => StreamResponse.fromJson(json),
     );
   }
 
