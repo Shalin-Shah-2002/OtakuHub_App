@@ -1,4 +1,5 @@
 /// Streaming response models for HiAnime API
+library;
 
 class StreamResponse {
   final bool success;

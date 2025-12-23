@@ -564,8 +564,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (lines.isEmpty) continue;
 
       // Skip WEBVTT header and metadata
-      if (lines[0].startsWith('WEBVTT') || lines[0].startsWith('NOTE'))
+      if (lines[0].startsWith('WEBVTT') || lines[0].startsWith('NOTE')) {
         continue;
+      }
 
       // Find timing line (contains -->)
       int timingLineIndex = -1;
