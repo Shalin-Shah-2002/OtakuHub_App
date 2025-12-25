@@ -53,12 +53,22 @@ dependencies:
   # Local storage for watchlist and history
   shared_preferences: ^2.2.2
   
-  # Video player for streaming
-  video_player: ^2.9.2
-  chewie: ^1.10.0
+  # Video player for streaming - using media_kit for better HLS support
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
   
   # WebView for fallback video player
   webview_flutter: ^4.10.0
+  
+  # Path provider for downloads
+  path_provider: ^2.1.1
+  
+  # Dio for advanced HTTP downloads
+  dio: ^5.4.0
+  
+  # Keep screen awake during video playback
+  wakelock_plus: ^1.2.8
 
 dev_dependencies:
   flutter_test:

@@ -159,6 +159,7 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { 
@@ -273,9 +274,7 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
 </head>
 <body>
   <div class="container">
-    <video id="videoPlayer" controls autoplay playsinline crossorigin="anonymous">
-      <source src="${widget.videoUrl}" type="application/x-mpegURL">
-      <source src="${widget.videoUrl}" type="application/vnd.apple.mpegurl">
+    <video id="videoPlayer" controls playsinline crossorigin="anonymous">
       $subtitleTracksHtml
       Your browser does not support the video tag.
     </video>
@@ -294,7 +293,7 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
       </div>
     </div>
     
-    <div id="loading" class="loading">Loading...</div>
+    <div id="loading" class="loading">Loading video...</div>
     <div id="error" class="error" style="display:none;">
       <p>Failed to load video</p>
       <p style="font-size: 12px; margin-top: 10px;">Please try a different server</p>
@@ -305,6 +304,81 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
     var loading = document.getElementById('loading');
     var error = document.getElementById('error');
     var subtitles = $subtitlesArrayJs;
+    var videoSrc = '${widget.videoUrl}';
+    
+    // Initialize HLS.js for Android/browsers that don't support HLS natively
+    function initPlayer() {
+      if (Hls.isSupported()) {
+        console.log('Using HLS.js');
+        var hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          backBufferLength: 90
+        });
+        hls.loadSource(videoSrc);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+          console.log('Manifest parsed, starting playback');
+          loading.style.display = 'none';
+          video.play().catch(function(e) {
+            console.log('Autoplay failed:', e);
+          });
+        });
+        hls.on(Hls.Events.ERROR, function(event, data) {
+          console.log('HLS error:', data.type, data.details);
+          if (data.fatal) {
+            switch(data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.log('Network error, trying to recover...');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.log('Media error, trying to recover...');
+                hls.recoverMediaError();
+                break;
+              default:
+                console.log('Fatal error, cannot recover');
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                video.style.display = 'none';
+                hls.destroy();
+                break;
+            }
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Native HLS support (Safari/iOS)
+        console.log('Using native HLS');
+        video.src = videoSrc;
+        video.addEventListener('loadedmetadata', function() {
+          loading.style.display = 'none';
+          video.play().catch(function(e) {
+            console.log('Autoplay failed:', e);
+          });
+        });
+      } else {
+        console.log('HLS not supported');
+        loading.style.display = 'none';
+        error.style.display = 'block';
+        error.innerHTML = '<p>HLS not supported on this device</p>';
+      }
+    }
+    
+    // Wait for HLS.js to load then init
+    if (typeof Hls !== 'undefined') {
+      initPlayer();
+    } else {
+      // HLS.js not loaded yet, wait a bit
+      setTimeout(function() {
+        if (typeof Hls !== 'undefined') {
+          initPlayer();
+        } else {
+          loading.style.display = 'none';
+          error.style.display = 'block';
+          error.innerHTML = '<p>Failed to load video player</p>';
+        }
+      }, 2000);
+    }
     
     // Subtitle handling
     function changeSubtitle(index) {
@@ -318,25 +392,17 @@ class _WebViewVideoPlayerState extends State<WebViewVideoPlayer> {
     video.addEventListener('loadedmetadata', function() {
       var tracks = video.textTracks;
       if (tracks.length > 0) {
-        // Set first track as showing
         for (var i = 0; i < tracks.length; i++) {
           tracks[i].mode = (i == 0) ? 'showing' : 'hidden';
         }
       }
     });
     
-    video.addEventListener('loadeddata', function() {
-      loading.style.display = 'none';
-    });
-    
-    video.addEventListener('error', function() {
+    video.addEventListener('error', function(e) {
+      console.log('Video error:', e);
       loading.style.display = 'none';
       error.style.display = 'block';
       video.style.display = 'none';
-    });
-    
-    video.addEventListener('canplay', function() {
-      loading.style.display = 'none';
     });
     
     $skipIntroJs

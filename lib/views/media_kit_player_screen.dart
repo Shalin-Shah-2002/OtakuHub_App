@@ -1,0 +1,1579 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import '../models/response/stream_response.dart';
+import '../services/api_service.dart';
+import '../utils/one_piece_theme.dart';
+import '../utils/logger_service.dart';
+
+/// Represents a single subtitle cue with timing and text
+class SubtitleCue {
+  final Duration start;
+  final Duration end;
+  final String text;
+
+  SubtitleCue({required this.start, required this.end, required this.text});
+}
+
+class MediaKitPlayerScreen extends StatefulWidget {
+  final String episodeId;
+  final String? episodeTitle;
+  final int? episodeNumber;
+  final String? animeThumbnail;
+  final String? animeTitle;
+  final String serverType;
+  final String? offlineFilePath;
+  final String? offlineStreamUrl;
+
+  const MediaKitPlayerScreen({
+    super.key,
+    required this.episodeId,
+    this.episodeTitle,
+    this.episodeNumber,
+    this.animeThumbnail,
+    this.animeTitle,
+    this.serverType = 'sub',
+    this.offlineFilePath,
+    this.offlineStreamUrl,
+  });
+
+  @override
+  State<MediaKitPlayerScreen> createState() => _MediaKitPlayerScreenState();
+}
+
+class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
+  final ApiService _apiService = ApiService();
+
+  // Media Kit player and controller
+  late final Player _player;
+  late final VideoController _videoController;
+
+  // Stream data
+  StreamResponse? _subStreamData;
+  StreamResponse? _dubStreamData;
+
+  // State
+  bool _isLoading = true;
+  bool _hasError = false;
+  String _errorMessage = '';
+  String _selectedServerType = 'sub';
+  int _selectedServerIndex = 0;
+
+  // Skip buttons
+  bool _showSkipIntro = false;
+  bool _showSkipOutro = false;
+
+  // Server panel
+  bool _showServerPanel = false;
+
+  // Subtitles
+  bool _showSubtitlePanel = false;
+  int _selectedSubtitleIndex = 0;
+  final List<SubtitleCue> _subtitleCues = [];
+  final String _currentSubtitleText = '';
+  double _subtitleFontSize = 16.0;
+  bool _subtitlesEnabled = true;
+
+  // Fullscreen
+  bool _isFullscreen = true;
+
+  // Controls visibility
+  bool _showControls = true;
+  Timer? _hideControlsTimer;
+
+  // Playback state for custom controls
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  Duration _buffer = Duration.zero;
+  bool _playbackStartedSuccessfully = false; // Track if video started playing
+
+  // Auto server switch tracking
+  bool _isAutoSwitching = false;
+  int _currentServerRetries = 0; // Retries for current server
+  int _totalServersSwitched = 0; // Total servers tried
+  static const int _maxRetriesPerServer = 2; // Quick retry - only 2 times before switching
+  static const int _maxTotalServers = 6; // Max total servers to try
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedServerType = widget.serverType;
+
+    // Initialize media_kit player with optimized configuration for fast playback
+    _player = Player(
+      configuration: PlayerConfiguration(
+        // Optimize for streaming - start playing ASAP
+        bufferSize: 32 * 1024 * 1024, // 32MB buffer
+      ),
+    );
+    _videoController = VideoController(
+      _player,
+      configuration: VideoControllerConfiguration(
+        enableHardwareAcceleration: true, // Use GPU for faster decoding
+      ),
+    );
+
+    // Enable wakelock
+    WakelockPlus.enable();
+
+    // Enter fullscreen
+    _enterFullscreen();
+
+    // Load streams
+    if (widget.offlineFilePath != null) {
+      _loadOfflineFile();
+    } else if (widget.offlineStreamUrl != null) {
+      _loadOfflineStreamUrl();
+    } else {
+      _loadAllStreams();
+    }
+
+    // Listen to player events
+    _setupPlayerListeners();
+
+    // Start auto-hide timer for controls
+    _startHideControlsTimer();
+  }
+
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _isPlaying && !_showServerPanel) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) {
+      _startHideControlsTimer();
+    }
+  }
+
+  void _setupPlayerListeners() {
+    _player.stream.playing.listen((playing) {
+      if (mounted) {
+        _isPlaying = playing;
+        // Mark playback as successful once video starts playing
+        if (playing) {
+          _playbackStartedSuccessfully = true;
+          // Reset error counters on successful play
+          _currentServerRetries = 0;
+          _totalServersSwitched = 0;
+        }
+        // Clear error state when video starts playing successfully
+        if (playing && _hasError) {
+          setState(() {
+            _hasError = false;
+            _errorMessage = '';
+            _isPlaying = playing;
+          });
+        } else {
+          setState(() => _isPlaying = playing);
+        }
+        // Start hide timer when playing
+        if (playing) {
+          _startHideControlsTimer();
+        }
+      }
+    });
+
+    _player.stream.position.listen((position) {
+      if (mounted) {
+        setState(() => _position = position);
+      }
+      _checkSkipButtons(position);
+      _updateSubtitle(position);
+    });
+
+    _player.stream.duration.listen((duration) {
+      if (mounted) {
+        setState(() => _duration = duration);
+      }
+    });
+
+    _player.stream.buffer.listen((buffer) {
+      if (mounted) {
+        setState(() => _buffer = buffer);
+        if (buffer > Duration.zero && _hasError) {
+          // Video has buffered content, clear error and reset fail counter
+          setState(() {
+            _hasError = false;
+            _errorMessage = '';
+            _currentServerRetries = 0;
+            _totalServersSwitched = 0;
+            _isAutoSwitching = false;
+          });
+        }
+      }
+    });
+
+    _player.stream.completed.listen((completed) {
+      if (completed && mounted) {
+        // Video completed
+        logger.i('MediaKitPlayer', 'Video playback completed');
+        setState(() => _showControls = true);
+      }
+    });
+
+    _player.stream.error.listen((error) {
+      if (error.isNotEmpty && mounted && !_isAutoSwitching) {
+        // CRITICAL: Don't switch servers if video has already played successfully!
+        // Once playback started, we should NOT auto-switch
+        if (_playbackStartedSuccessfully) {
+          logger.w('MediaKitPlayer', 'Ignoring error - playback already started: $error');
+          return;
+        }
+        
+        // CRITICAL: Don't switch servers if video is actually playing!
+        // Some errors are non-fatal and playback continues fine
+        if (_isPlaying || _position.inSeconds > 0 || _buffer.inSeconds > 2) {
+          logger.w('MediaKitPlayer', 'Ignoring error - video is playing: $error');
+          _playbackStartedSuccessfully = true; // Mark as successful
+          return;
+        }
+        
+        // Ignore audio device errors (common on iOS Simulator)
+        // The video can still play, just without audio on simulator
+        if (error.contains('audio device') || 
+            error.contains('no sound') ||
+            error.contains('Audio output') ||
+            error.contains('audio') ||
+            error.contains('Audio')) {
+          logger.w('MediaKitPlayer', 'Audio device warning (ignored): $error');
+          // Don't trigger retry for audio-only issues
+          return;
+        }
+        
+        logger.e('MediaKitPlayer', 'Player error: $error');
+        _handlePlaybackError();
+      }
+    });
+  }
+
+  void _handlePlaybackError() {
+    _currentServerRetries++;
+    
+    logger.i('MediaKitPlayer', 'Playback error - retry $_currentServerRetries/$_maxRetriesPerServer for current server');
+    
+    if (_currentServerRetries < _maxRetriesPerServer) {
+      // Retry the same server
+      _retryCurrentServer();
+    } else {
+      // Max retries for this server, switch to next
+      _currentServerRetries = 0;
+      _totalServersSwitched++;
+      
+      if (_totalServersSwitched < _maxTotalServers) {
+        _autoSwitchServer();
+      } else {
+        // All servers exhausted
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'All servers failed after multiple retries. Tap retry or switch manually.';
+          _isAutoSwitching = false;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _retryCurrentServer() async {
+    if (_isAutoSwitching) return;
+    
+    setState(() {
+      _isAutoSwitching = true;
+      _isLoading = true;
+    });
+    
+    final stream = _getCurrentStream();
+    logger.i('MediaKitPlayer', 'Retrying server ${stream?.serverName ?? "Unknown"} (attempt $_currentServerRetries/$_maxRetriesPerServer)');
+    
+    // Quick retry - no delay for better UX
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    await _initializePlayer();
+    setState(() => _isAutoSwitching = false);
+  }
+
+  Future<void> _autoSwitchServer() async {
+    if (_isAutoSwitching) return;
+    
+    setState(() {
+      _isAutoSwitching = true;
+      _isLoading = true;
+    });
+
+    logger.i('MediaKitPlayer', 'Switching to next server (total switched: $_totalServersSwitched)');
+
+    final streams = _getCurrentStreams();
+    final nextIndex = _selectedServerIndex + 1;
+
+    if (nextIndex < streams.length) {
+      // Try next server in same type
+      setState(() => _selectedServerIndex = nextIndex);
+    } else {
+      // Switch to other type
+      final otherType = _selectedServerType == 'sub' ? 'dub' : 'sub';
+      final otherStreams = otherType == 'sub'
+          ? _subStreamData?.streams ?? []
+          : _dubStreamData?.streams ?? [];
+
+      if (otherStreams.isNotEmpty) {
+        setState(() {
+          _selectedServerType = otherType;
+          _selectedServerIndex = 0;
+        });
+      } else {
+        // No more servers, reset and show error
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'All servers exhausted. Please try again later.';
+          _isLoading = false;
+          _isAutoSwitching = false;
+        });
+        return;
+      }
+    }
+
+    // Reset retry counter for new server
+    _currentServerRetries = 0;
+    
+    await _initializePlayer();
+    setState(() => _isAutoSwitching = false);
+  }
+
+  void _enterFullscreen() {
+    setState(() => _isFullscreen = true);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  void _exitFullscreen() {
+    setState(() => _isFullscreen = false);
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  Future<void> _loadOfflineFile() async {
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
+
+    try {
+      final file = File(widget.offlineFilePath!);
+      if (!await file.exists()) {
+        throw Exception('Downloaded file not found');
+      }
+
+      await _player.open(Media(widget.offlineFilePath!));
+      
+      setState(() => _isLoading = false);
+      logger.i('MediaKitPlayer', 'Offline file loaded');
+    } catch (e) {
+      logger.e('MediaKitPlayer', 'Failed to load offline file', error: e);
+      setState(() {
+        _hasError = true;
+        _errorMessage = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadOfflineStreamUrl() async {
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
+
+    try {
+      await _player.open(
+        Media(
+          widget.offlineStreamUrl!,
+          httpHeaders: {
+            'Referer': 'https://megacloud.tv/',
+            'Origin': 'https://megacloud.tv',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+        ),
+      );
+      
+      setState(() => _isLoading = false);
+      logger.i('MediaKitPlayer', 'Offline stream URL loaded');
+    } catch (e) {
+      logger.e('MediaKitPlayer', 'Failed to load offline stream URL', error: e);
+      setState(() {
+        _hasError = true;
+        _errorMessage = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadAllStreams() async {
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+      _errorMessage = '';
+    });
+
+    try {
+      logger.i('MediaKitPlayer', 'Loading streams for: ${widget.episodeId}');
+
+      // OPTIMIZATION: Load requested type FIRST for instant playback
+      // Then load the other type in background for seamless switching
+      final primaryType = _selectedServerType;
+      final secondaryType = primaryType == 'sub' ? 'dub' : 'sub';
+
+      // Load primary stream immediately
+      final primaryStream = await _apiService
+          .getStreamingLinks(
+            episodeId: widget.episodeId,
+            serverType: primaryType,
+            includeProxy: true,
+          )
+          .catchError((e) => StreamResponse(
+                success: false,
+                episodeId: widget.episodeId,
+                serverType: primaryType,
+                totalStreams: 0,
+                streams: [],
+              ));
+
+      // Set primary stream data immediately
+      if (primaryType == 'sub') {
+        _subStreamData = primaryStream;
+      } else {
+        _dubStreamData = primaryStream;
+      }
+
+      // Start playing immediately if we have streams!
+      if (primaryStream.streams.isNotEmpty) {
+        // Don't wait - start initializing player NOW
+        _initializePlayer();
+      }
+
+      // Load secondary stream in background (non-blocking)
+      _apiService
+          .getStreamingLinks(
+            episodeId: widget.episodeId,
+            serverType: secondaryType,
+            includeProxy: true,
+          )
+          .then((secondaryStream) {
+            if (mounted) {
+              setState(() {
+                if (secondaryType == 'sub') {
+                  _subStreamData = secondaryStream;
+                } else {
+                  _dubStreamData = secondaryStream;
+                }
+              });
+            }
+          })
+          .catchError((e) {
+            logger.w('MediaKitPlayer', 'Failed to load secondary streams: $e');
+          });
+
+      // If primary had no streams, wait for secondary
+      if (primaryStream.streams.isEmpty) {
+        final secondaryStream = await _apiService
+            .getStreamingLinks(
+              episodeId: widget.episodeId,
+              serverType: secondaryType,
+              includeProxy: true,
+            )
+            .catchError((e) => StreamResponse(
+                  success: false,
+                  episodeId: widget.episodeId,
+                  serverType: secondaryType,
+                  totalStreams: 0,
+                  streams: [],
+                ));
+
+        if (secondaryType == 'sub') {
+          _subStreamData = secondaryStream;
+        } else {
+          _dubStreamData = secondaryStream;
+        }
+
+        // Check if we have streams now
+        if (secondaryStream.streams.isNotEmpty) {
+          _selectedServerType = secondaryType;
+          await _initializePlayer();
+        } else {
+          throw Exception('No streams available');
+        }
+      }
+    } catch (e, stackTrace) {
+      logger.e('MediaKitPlayer', 'Failed to load streams', error: e, stackTrace: stackTrace);
+      setState(() {
+        _hasError = true;
+        _errorMessage = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<StreamData> _getCurrentStreams() {
+    if (_selectedServerType == 'sub') {
+      return _subStreamData?.streams ?? [];
+    } else {
+      return _dubStreamData?.streams ?? [];
+    }
+  }
+
+  StreamData? _getCurrentStream() {
+    final streams = _getCurrentStreams();
+    if (_selectedServerIndex < streams.length) {
+      return streams[_selectedServerIndex];
+    }
+    return streams.isNotEmpty ? streams.first : null;
+  }
+
+  Future<void> _initializePlayer() async {
+    final stream = _getCurrentStream();
+    if (stream == null || stream.sources.isEmpty) {
+      setState(() {
+        _hasError = true;
+        _errorMessage = 'No video sources available';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    // Try each source - PREFER PROXY URL for faster, more reliable playback
+    for (final source in stream.sources) {
+      // Use per-source headers - CRITICAL for CDN compatibility!
+      // Each CDN (sunburst, rainveil, netmagcdn, etc.) requires different Referer headers
+      final headers = source.headers.isNotEmpty
+          ? source.headers
+          : <String, String>{
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+              'Referer': 'https://megacloud.blog/',
+              'Origin': 'https://megacloud.blog',
+            };
+
+      // TRY PROXY URL FIRST - it's pre-processed and more reliable
+      if (source.proxyUrl != null && source.proxyUrl!.isNotEmpty) {
+        final proxyUrl = '${_apiService.baseUrl}${source.proxyUrl}';
+        logger.d('MediaKitPlayer', 'Trying proxy URL first (faster): $proxyUrl');
+
+        try {
+          await _player.open(
+            Media(
+              proxyUrl,
+              httpHeaders: {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36',
+              },
+            ),
+          );
+
+          // Start playback immediately - no delay!
+          await _player.play();
+          
+          // Hide loading immediately - let the player's own buffering indicator show
+          setState(() => _isLoading = false);
+          logger.i('MediaKitPlayer', 'Playing via proxy: $proxyUrl');
+          
+          // Load subtitles in background (non-blocking)
+          if (stream.subtitles.isNotEmpty) {
+            Future.microtask(() => _loadSubtitles(stream.subtitles));
+          }
+          return;
+        } catch (e) {
+          logger.w('MediaKitPlayer', 'Failed with proxy URL: $e');
+        }
+      }
+
+      // Fallback to direct URL if proxy fails
+      String videoUrl = source.file;
+      logger.d('MediaKitPlayer', 'Trying direct URL: $videoUrl');
+
+      try {
+        await _player.open(
+          Media(
+            videoUrl,
+            httpHeaders: headers,
+          ),
+        );
+
+        // Start playback immediately
+        await _player.play();
+        
+        // Hide loading immediately
+        setState(() => _isLoading = false);
+        logger.i('MediaKitPlayer', 'Playing direct URL: $videoUrl');
+        
+        // Load subtitles in background
+        if (stream.subtitles.isNotEmpty) {
+          Future.microtask(() => _loadSubtitles(stream.subtitles));
+        }
+        return;
+      } catch (e) {
+        logger.w('MediaKitPlayer', 'Failed with direct URL: $e');
+      }
+    }
+
+    // All sources failed, try next server
+    await _tryNextServer();
+  }
+
+  Future<void> _tryNextServer() async {
+    final streams = _getCurrentStreams();
+    final nextIndex = _selectedServerIndex + 1;
+
+    if (nextIndex < streams.length) {
+      logger.i('MediaKitPlayer', 'Trying next server: $nextIndex');
+      setState(() {
+        _selectedServerIndex = nextIndex;
+      });
+      await _initializePlayer();
+    } else {
+      // Try other type
+      final otherType = _selectedServerType == 'sub' ? 'dub' : 'sub';
+      final otherStreams = otherType == 'sub'
+          ? _subStreamData?.streams ?? []
+          : _dubStreamData?.streams ?? [];
+
+      if (otherStreams.isNotEmpty) {
+        setState(() {
+          _selectedServerType = otherType;
+          _selectedServerIndex = 0;
+        });
+        await _initializePlayer();
+      } else {
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'All servers failed. Please try again.';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _loadSubtitles(List<Subtitle> subtitles) async {
+    if (subtitles.isEmpty || _selectedSubtitleIndex < 0) return;
+
+    try {
+      final subtitle = subtitles[_selectedSubtitleIndex.clamp(0, subtitles.length - 1)];
+      // media_kit handles subtitles internally, but we can also parse VTT
+      logger.i('MediaKitPlayer', 'Subtitles available: ${subtitle.label}');
+    } catch (e) {
+      logger.w('MediaKitPlayer', 'Failed to load subtitles: $e');
+    }
+  }
+
+  void _checkSkipButtons(Duration position) {
+    final stream = _getCurrentStream();
+    if (stream?.skips == null) return;
+
+    final positionSec = position.inSeconds;
+
+    // Skip intro
+    if (stream!.skips!.intro != null) {
+      final introStart = stream.skips!.intro!.start;
+      final introEnd = stream.skips!.intro!.end;
+      final shouldShow = positionSec >= introStart && positionSec < introEnd;
+      if (_showSkipIntro != shouldShow) {
+        setState(() => _showSkipIntro = shouldShow);
+      }
+    }
+
+    // Skip outro
+    if (stream.skips!.outro != null) {
+      final outroStart = stream.skips!.outro!.start;
+      final outroEnd = stream.skips!.outro!.end;
+      final shouldShow = positionSec >= outroStart && positionSec < outroEnd;
+      if (_showSkipOutro != shouldShow) {
+        setState(() => _showSkipOutro = shouldShow);
+      }
+    }
+  }
+
+  void _updateSubtitle(Duration position) {
+    // Subtitle update logic if needed
+  }
+
+  void _skipIntro() {
+    final stream = _getCurrentStream();
+    if (stream?.skips?.intro != null) {
+      _player.seek(Duration(seconds: stream!.skips!.intro!.end));
+    }
+  }
+
+  void _skipOutro() {
+    final stream = _getCurrentStream();
+    if (stream?.skips?.outro != null) {
+      _player.seek(Duration(seconds: stream!.skips!.outro!.end));
+    }
+  }
+
+  void _switchServer(String type, int index) {
+    // Reset all tracking when manually switching
+    _currentServerRetries = 0;
+    _totalServersSwitched = 0;
+    _playbackStartedSuccessfully = false; // Reset for new server
+    
+    setState(() {
+      _selectedServerType = type;
+      _selectedServerIndex = index;
+      _isLoading = true;
+      _hasError = false;
+      _showServerPanel = false;
+    });
+    _initializePlayer();
+  }
+
+  @override
+  void dispose() {
+    _hideControlsTimer?.cancel();
+    WakelockPlus.disable();
+    _player.dispose();
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: _toggleControls,
+        behavior: HitTestBehavior.opaque,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Video Player (fills the entire screen)
+            if (_isLoading)
+              _buildLoadingState()
+            else if (_hasError)
+              _buildErrorState()
+            else
+              Positioned.fill(child: _buildVideoPlayer()),
+
+            // Controls overlay (animated)
+            if (!_isLoading && !_hasError) ...[
+              // Top Bar - positioned at top
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedOpacity(
+                  opacity: _showControls ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: _buildTopBar(),
+                  ),
+                ),
+              ),
+
+              // Center play/pause button
+              Positioned.fill(
+                child: AnimatedOpacity(
+                  opacity: _showControls ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: _buildCenterControls(),
+                  ),
+                ),
+              ),
+
+              // Bottom Controls - positioned at bottom
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedOpacity(
+                  opacity: _showControls ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: _buildBottomControls(),
+                  ),
+                ),
+              ),
+
+              // Skip Buttons (always visible when applicable)
+              _buildSkipButtons(),
+
+              // Subtitle display
+              if (_subtitlesEnabled && _currentSubtitleText.isNotEmpty)
+                _buildSubtitleDisplay(),
+            ],
+
+            // Server Panel (top side)
+            if (_showServerPanel) _buildServerPanel(),
+            
+            // Subtitle Settings Panel
+            if (_showSubtitlePanel) _buildSubtitleSettingsPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubtitleDisplay() {
+    return Positioned(
+      bottom: 100,
+      left: 20,
+      right: 20,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            _currentSubtitleText,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: _subtitleFontSize,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    final stream = _getCurrentStream();
+    final serverName = stream?.serverName ?? 'Unknown';
+    
+    String loadingMessage = 'Loading video...';
+    if (_isAutoSwitching) {
+      if (_currentServerRetries > 0) {
+        loadingMessage = 'Retrying... ($_currentServerRetries/$_maxRetriesPerServer)';
+      } else {
+        loadingMessage = 'Switching server...';
+      }
+    }
+    
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(OnePieceTheme.strawHatRed),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              loadingMessage,
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            ),
+            if (_isAutoSwitching) ...[
+              const SizedBox(height: 8),
+              Text(
+                '$serverName (${_selectedServerType.toUpperCase()})',
+                style: TextStyle(
+                  color: OnePieceTheme.strawHatGold,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: OnePieceTheme.strawHatRed),
+            const SizedBox(height: 12),
+            Text(
+              'Failed to load video',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _errorMessage,
+              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _loadAllStreams,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: OnePieceTheme.strawHatRed,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _showServerPanel = true),
+                  icon: const Icon(Icons.dns),
+                  label: const Text('Switch Server'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white54),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayer() {
+    return Video(
+      controller: _videoController,
+      controls: NoVideoControls, // We use custom controls
+    );
+  }
+
+  Widget _buildCenterControls() {
+    return Center(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black38,
+          shape: BoxShape.circle,
+        ),
+        child: IconButton(
+          iconSize: 64,
+          icon: Icon(
+            _isPlaying ? Icons.pause : Icons.play_arrow,
+            color: Colors.white,
+          ),
+          onPressed: () {
+            _player.playOrPause();
+            _startHideControlsTimer();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkipButtons() {
+    return Positioned(
+      right: 20,
+      bottom: 140,
+      child: Column(
+        children: [
+          if (_showSkipIntro)
+            ElevatedButton(
+              onPressed: () {
+                _skipIntro();
+                _startHideControlsTimer();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: OnePieceTheme.strawHatRed.withOpacity(0.9),
+              ),
+              child: const Text('Skip Intro'),
+            ),
+          if (_showSkipOutro)
+            ElevatedButton(
+              onPressed: () {
+                _skipOutro();
+                _startHideControlsTimer();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: OnePieceTheme.strawHatRed.withOpacity(0.9),
+              ),
+              child: const Text('Skip Outro'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    final stream = _getCurrentStream();
+    final serverName = stream?.serverName ?? 'Unknown';
+    final subStreams = _subStreamData?.streams ?? [];
+    final dubStreams = _dubStreamData?.streams ?? [];
+    
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black.withOpacity(0.8), Colors.transparent],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Title row
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.animeTitle ?? '',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (widget.episodeNumber != null)
+                          Text(
+                            'Episode ${widget.episodeNumber}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // Offline badge
+                  if (widget.offlineFilePath != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'OFFLINE',
+                        style: TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Server controls row
+            if (widget.offlineFilePath == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    // Current server info
+                    Icon(Icons.dns, color: OnePieceTheme.strawHatGold, size: 18),
+                    const SizedBox(width: 6),
+                    Text(
+                      serverName,
+                      style: TextStyle(
+                        color: OnePieceTheme.strawHatGold,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // SUB/DUB toggle
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildTypeToggle('SUB', 'sub', subStreams.length),
+                          _buildTypeToggle('DUB', 'dub', dubStreams.length),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    // Server switch button
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() => _showServerPanel = !_showServerPanel);
+                        _startHideControlsTimer();
+                      },
+                      icon: Icon(
+                        Icons.swap_horiz,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      label: Text(
+                        'Switch',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypeToggle(String label, String type, int count) {
+    final isSelected = _selectedServerType == type;
+    final isDisabled = count == 0;
+    
+    return GestureDetector(
+      onTap: isDisabled ? null : () {
+        if (_selectedServerType != type) {
+          setState(() {
+            _selectedServerType = type;
+            _selectedServerIndex = 0;
+            _isLoading = true;
+            _currentServerRetries = 0;
+            _totalServersSwitched = 0;
+          });
+          _initializePlayer();
+          _startHideControlsTimer();
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? OnePieceTheme.strawHatRed : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          '$label ($count)',
+          style: TextStyle(
+            color: isDisabled 
+                ? Colors.white.withOpacity(0.3) 
+                : isSelected 
+                    ? Colors.white 
+                    : Colors.white.withOpacity(0.7),
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    if (hours > 0) {
+      return '${twoDigits(hours)}:$minutes:$seconds';
+    }
+    return '$minutes:$seconds';
+  }
+
+  Widget _buildBottomControls() {
+    final stream = _getCurrentStream();
+    final subtitles = stream?.subtitles ?? [];
+    
+    final progress = _duration.inMilliseconds > 0
+        ? _position.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+    final bufferProgress = _duration.inMilliseconds > 0
+        ? _buffer.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.only(bottom: 16, left: 16, right: 16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [Colors.black.withOpacity(0.9), Colors.transparent],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Progress bar row
+            Row(
+              children: [
+                Text(
+                  _formatDuration(_position),
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      // Buffer progress
+                      LinearProgressIndicator(
+                        value: bufferProgress.clamp(0.0, 1.0),
+                        backgroundColor: Colors.white24,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white.withOpacity(0.3),
+                        ),
+                        minHeight: 4,
+                      ),
+                      // Seek slider
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                          activeTrackColor: OnePieceTheme.strawHatRed,
+                          inactiveTrackColor: Colors.transparent,
+                          thumbColor: OnePieceTheme.strawHatRed,
+                          overlayColor: OnePieceTheme.strawHatRed.withOpacity(0.3),
+                        ),
+                        child: Slider(
+                          value: progress.clamp(0.0, 1.0),
+                          onChanged: (value) {
+                            final newPosition = Duration(
+                              milliseconds: (value * _duration.inMilliseconds).round(),
+                            );
+                            _player.seek(newPosition);
+                            _startHideControlsTimer();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _formatDuration(_duration),
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Playback controls row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Play/Pause
+                IconButton(
+                  icon: Icon(
+                    _isPlaying ? Icons.pause : Icons.play_arrow,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                  onPressed: () {
+                    _player.playOrPause();
+                    _startHideControlsTimer();
+                  },
+                ),
+                // Rewind 10s
+                IconButton(
+                  icon: const Icon(Icons.replay_10, color: Colors.white, size: 28),
+                  onPressed: () {
+                    final newPosition = _position - const Duration(seconds: 10);
+                    _player.seek(newPosition < Duration.zero ? Duration.zero : newPosition);
+                    _startHideControlsTimer();
+                  },
+                ),
+                // Forward 10s
+                IconButton(
+                  icon: const Icon(Icons.forward_10, color: Colors.white, size: 28),
+                  onPressed: () {
+                    final newPosition = _position + const Duration(seconds: 10);
+                    _player.seek(newPosition > _duration ? _duration : newPosition);
+                    _startHideControlsTimer();
+                  },
+                ),
+                // Subtitles button
+                IconButton(
+                  icon: Icon(
+                    _subtitlesEnabled ? Icons.subtitles : Icons.subtitles_off,
+                    color: subtitles.isNotEmpty 
+                        ? (_subtitlesEnabled ? OnePieceTheme.strawHatGold : Colors.white)
+                        : Colors.white.withOpacity(0.3),
+                    size: 28,
+                  ),
+                  onPressed: subtitles.isNotEmpty ? () {
+                    setState(() => _showSubtitlePanel = !_showSubtitlePanel);
+                    _startHideControlsTimer();
+                  } : null,
+                ),
+                // Playback speed
+                PopupMenuButton<double>(
+                  icon: const Icon(Icons.speed, color: Colors.white, size: 28),
+                  color: const Color(0xFF1a1a2e),
+                  onSelected: (speed) {
+                    _player.setRate(speed);
+                    _startHideControlsTimer();
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem(value: 0.5, child: Text('0.5x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(value: 0.75, child: Text('0.75x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(value: 1.0, child: Text('1.0x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(value: 1.25, child: Text('1.25x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(value: 1.5, child: Text('1.5x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(value: 2.0, child: Text('2.0x', style: TextStyle(color: Colors.white))),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubtitleSettingsPanel() {
+    final stream = _getCurrentStream();
+    final subtitles = stream?.subtitles ?? [];
+
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: () => setState(() => _showSubtitlePanel = false),
+        child: Container(
+          color: Colors.black54,
+          child: Center(
+            child: GestureDetector(
+              onTap: () {}, // Prevent closing when tapping panel
+              child: Container(
+                margin: const EdgeInsets.all(32),
+                padding: const EdgeInsets.all(16),
+                constraints: const BoxConstraints(maxWidth: 400),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1a1a2e),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        const Icon(Icons.subtitles, color: OnePieceTheme.strawHatGold),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Subtitle Settings',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => setState(() => _showSubtitlePanel = false),
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Colors.white24),
+                    
+                    // Enable/Disable toggle
+                    SwitchListTile(
+                      title: const Text('Show Subtitles', style: TextStyle(color: Colors.white)),
+                      value: _subtitlesEnabled,
+                      activeThumbColor: OnePieceTheme.strawHatRed,
+                      onChanged: (value) => setState(() => _subtitlesEnabled = value),
+                    ),
+                    
+                    // Font size slider
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                'Font Size: ${_subtitleFontSize.toInt()}',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              const Spacer(),
+                              Text(
+                                'Preview',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: _subtitleFontSize,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: _subtitleFontSize,
+                            min: 12,
+                            max: 32,
+                            divisions: 10,
+                            activeColor: OnePieceTheme.strawHatRed,
+                            inactiveColor: Colors.white24,
+                            onChanged: (value) => setState(() => _subtitleFontSize = value),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Small', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
+                              Text('Large', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const Divider(color: Colors.white24),
+                    
+                    // Subtitle language selection
+                    if (subtitles.isNotEmpty) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Text(
+                          'Language',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      SizedBox(
+                        height: 120,
+                        child: ListView.builder(
+                          itemCount: subtitles.length,
+                          itemBuilder: (context, index) {
+                            final sub = subtitles[index];
+                            final isSelected = _selectedSubtitleIndex == index;
+                            return ListTile(
+                              dense: true,
+                              leading: Icon(
+                                isSelected ? Icons.check_circle : Icons.circle_outlined,
+                                color: isSelected ? OnePieceTheme.strawHatGold : Colors.white54,
+                                size: 20,
+                              ),
+                              title: Text(
+                                sub.label,
+                                style: TextStyle(
+                                  color: isSelected ? OnePieceTheme.strawHatGold : Colors.white,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                              onTap: () {
+                                setState(() => _selectedSubtitleIndex = index);
+                                _loadSubtitles(subtitles);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ] else
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          'No subtitles available for this stream',
+                          style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServerPanel() {
+    final subStreams = _subStreamData?.streams ?? [];
+    final dubStreams = _dubStreamData?.streams ?? [];
+
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: () => setState(() => _showServerPanel = false),
+        child: Container(
+          color: Colors.black54,
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.all(32),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1a1a2e),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Select Server',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // SUB servers
+                  if (subStreams.isNotEmpty) ...[
+                    const Text('SUB', style: TextStyle(color: OnePieceTheme.strawHatGold)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List.generate(subStreams.length, (i) {
+                        final isSelected = _selectedServerType == 'sub' && _selectedServerIndex == i;
+                        return ChoiceChip(
+                          label: Text(subStreams[i].serverName),
+                          selected: isSelected,
+                          onSelected: (_) => _switchServer('sub', i),
+                          selectedColor: OnePieceTheme.strawHatRed,
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : Colors.white70,
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  // DUB servers
+                  if (dubStreams.isNotEmpty) ...[
+                    const Text('DUB', style: TextStyle(color: OnePieceTheme.strawHatGold)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List.generate(dubStreams.length, (i) {
+                        final isSelected = _selectedServerType == 'dub' && _selectedServerIndex == i;
+                        return ChoiceChip(
+                          label: Text(dubStreams[i].serverName),
+                          selected: isSelected,
+                          onSelected: (_) => _switchServer('dub', i),
+                          selectedColor: OnePieceTheme.strawHatRed,
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : Colors.white70,
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

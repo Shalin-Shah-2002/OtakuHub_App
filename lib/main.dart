@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:media_kit/media_kit.dart';
 import 'controllers/anime_controller.dart';
 import 'services/storage_service.dart';
+import 'services/download_service.dart';
 import 'views/main_navigation.dart';
 import 'views/base_url_screen.dart';
 import 'utils/logger_service.dart';
@@ -13,6 +15,9 @@ void main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      
+      // Initialize media_kit for video playback
+      MediaKit.ensureInitialized();
 
       setupGlobalErrorHandling();
 
@@ -49,6 +54,9 @@ Future<void> _initServices() async {
 
   // Initialize storage service first
   await Get.putAsync(() => StorageService().init());
+
+  // Initialize download service
+  await Get.putAsync(() => DownloadService().init());
 
   logger.i('APP', 'All services initialized');
 }

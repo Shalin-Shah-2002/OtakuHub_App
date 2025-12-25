@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext traffic for all domains (needed for video streams) -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- Specific domains for HiAnime API and video streaming -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">hianime-api-b6ix.onrender.com</domain>
+        <domain includeSubdomains="true">onrender.com</domain>
+        <domain includeSubdomains="true">megacloud.tv</domain>
+        <domain includeSubdomains="true">rapid-cloud.co</domain>
+        <domain includeSubdomains="true">vidstreaming.io</domain>
+        <domain includeSubdomains="true">gogocdn.net</domain>
+        <domain includeSubdomains="true">akamaized.net</domain>
+        <domain includeSubdomains="true">cloudflare.com</domain>
+        <domain includeSubdomains="true">stormshade84.live</domain>
+        <domain includeSubdomains="true">live</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

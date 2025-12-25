@@ -98,6 +98,7 @@ class StreamSource {
   final String quality;
   final bool isM3U8;
   final String host;
+  final Map<String, String> headers; // Per-source headers REQUIRED for playback
 
   StreamSource({
     required this.file,
@@ -106,6 +107,7 @@ class StreamSource {
     required this.quality,
     required this.isM3U8,
     required this.host,
+    required this.headers,
   });
 
   factory StreamSource.fromJson(Map<String, dynamic> json) {
@@ -116,6 +118,7 @@ class StreamSource {
       quality: json['quality']?.toString() ?? 'auto',
       isM3U8: json['isM3U8'] ?? true,
       host: json['host']?.toString() ?? '',
+      headers: Map<String, String>.from(json['headers'] ?? {}),
     );
   }
 
@@ -126,6 +129,7 @@ class StreamSource {
     'quality': quality,
     'isM3U8': isM3U8,
     'host': host,
+    'headers': headers,
   };
 }
 

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import '../models/response/anime_model.dart';
 import '../models/response/episode_model.dart';
+import '../services/download_service.dart';
 import '../utils/one_piece_theme.dart';
-import 'video_player_screen.dart';
+import 'media_kit_player_screen.dart';
 
 /// Shows a beautiful bottom sheet with streaming options
 class StreamOptionsSheet extends StatefulWidget {
@@ -71,7 +73,7 @@ class _StreamOptionsSheetState extends State<StreamOptionsSheet>
       context,
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            VideoPlayerScreen(
+            MediaKitPlayerScreen(
               episodeId: widget.episode.streamingId ?? widget.episode.id ?? '',
               episodeTitle: widget.episode.title,
               episodeNumber: widget.episode.number,
@@ -101,6 +103,144 @@ class _StreamOptionsSheetState extends State<StreamOptionsSheet>
   void _watchInBrowser() {
     Navigator.pop(context);
     widget.onOpenInBrowser();
+  }
+
+  void _startDownload() {
+    if (widget.anime == null) {
+      Get.snackbar(
+        'Error',
+        'Anime details not available',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    final downloadService = Get.find<DownloadService>();
+    downloadService.startDownload(
+      anime: widget.anime!,
+      episode: widget.episode,
+      serverType: _selectedType,
+    );
+    Navigator.pop(context);
+  }
+
+  Widget _buildDownloadOption(bool isDark) {
+    final downloadService = Get.find<DownloadService>();
+    final animeSlug = widget.anime?.slug ?? '';
+    final episodeNumber = widget.episode.number ?? 0;
+
+    return Obx(() {
+      final isDownloaded = downloadService.isDownloaded(
+        animeSlug,
+        episodeNumber,
+        _selectedType,
+      );
+      final isDownloading = downloadService.isDownloading(
+        animeSlug,
+        episodeNumber,
+        _selectedType,
+      );
+      final download = downloadService.getDownload(
+        animeSlug,
+        episodeNumber,
+        _selectedType,
+      );
+
+      String subtitle;
+      IconData icon;
+      Color iconColor;
+      VoidCallback? onTap;
+
+      if (isDownloaded) {
+        subtitle = 'Already downloaded';
+        icon = Icons.download_done;
+        iconColor = Colors.green;
+        onTap = null;
+      } else if (isDownloading) {
+        final progress = download?.progress ?? 0;
+        subtitle = 'Downloading... ${(progress * 100).toInt()}%';
+        icon = Icons.downloading;
+        iconColor = OnePieceTheme.grandLineBlue;
+        onTap = null;
+      } else {
+        subtitle = 'Save for offline viewing';
+        icon = Icons.download_for_offline;
+        iconColor = OnePieceTheme.grandLineBlue;
+        onTap = _startDownload;
+      }
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withOpacity(0.05)
+                  : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDownloaded
+                        ? Colors.green.withOpacity(0.2)
+                        : (isDark ? Colors.white10 : Colors.white),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: isDownloading
+                      ? SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            value: download?.progress,
+                            strokeWidth: 3,
+                            valueColor: AlwaysStoppedAnimation(iconColor),
+                          ),
+                        )
+                      : Icon(icon, color: iconColor, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isDownloaded ? 'Downloaded' : 'Download Episode',
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black87,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          color: isDark ? Colors.white54 : Colors.black45,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!isDownloaded && !isDownloading)
+                  Icon(
+                    Icons.chevron_right,
+                    color: isDark ? Colors.white38 : Colors.black26,
+                  ),
+                if (isDownloaded)
+                  const Icon(Icons.check_circle, color: Colors.green),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   @override
@@ -309,6 +449,10 @@ class _StreamOptionsSheetState extends State<StreamOptionsSheet>
                     isPrimary: false,
                     isDark: isDark,
                   ),
+                  const SizedBox(height: 12),
+
+                  // Download Option
+                  _buildDownloadOption(isDark),
                 ],
               ),
             ),

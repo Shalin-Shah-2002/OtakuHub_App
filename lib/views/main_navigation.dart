@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
+import '../models/download_item.dart';
 import '../services/storage_service.dart';
+import '../services/download_service.dart';
 import '../utils/logger_service.dart';
 import '../utils/one_piece_theme.dart';
 import 'home_screen.dart';
 import 'trending_screen.dart';
 import 'search_screen.dart';
 import 'watchlist_screen.dart';
+import 'downloads_screen.dart';
 import 'about_screen.dart';
 import 'debug_log_screen.dart';
 
@@ -21,11 +24,13 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
   final StorageService storageService = Get.find<StorageService>();
+  final DownloadService downloadService = Get.find<DownloadService>();
 
   final List<Widget> _screens = const [
     HomeScreen(),
     TrendingScreen(),
     SearchScreen(),
+    DownloadsScreen(),
     WatchlistScreen(),
   ];
 
@@ -140,6 +145,41 @@ class _MainNavigationState extends State<MainNavigation> {
           NavigationDestination(
             icon: Obx(
               () => Badge(
+                isLabelVisible: downloadService.downloads.any(
+                  (d) =>
+                      d.status == DownloadStatus.downloading ||
+                      d.status == DownloadStatus.pending,
+                ),
+                label: const Icon(
+                  Icons.downloading,
+                  size: 10,
+                  color: Colors.white,
+                ),
+                backgroundColor: OnePieceTheme.grandLineBlue,
+                child: const Icon(Icons.download_outlined),
+              ),
+            ),
+            selectedIcon: Obx(
+              () => Badge(
+                isLabelVisible: downloadService.downloads.any(
+                  (d) =>
+                      d.status == DownloadStatus.downloading ||
+                      d.status == DownloadStatus.pending,
+                ),
+                label: const Icon(
+                  Icons.downloading,
+                  size: 10,
+                  color: Colors.white,
+                ),
+                backgroundColor: OnePieceTheme.grandLineBlue,
+                child: const Icon(Icons.download_done),
+              ),
+            ),
+            label: 'Downloads',
+          ),
+          NavigationDestination(
+            icon: Obx(
+              () => Badge(
                 isLabelVisible: storageService.watchlist.isNotEmpty,
                 label: Text('${storageService.watchlist.length}'),
                 backgroundColor: OnePieceTheme.strawHatRed,
@@ -172,6 +212,8 @@ class _MainNavigationState extends State<MainNavigation> {
       case 2:
         return 'Search Anime';
       case 3:
+        return 'Downloads';
+      case 4:
         return 'My Library';
       default:
         return 'Anime App';
