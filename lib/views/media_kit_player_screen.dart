@@ -1124,11 +1124,11 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
               // Skip Buttons (always visible when applicable)
               _buildSkipButtons(),
-
-              // Subtitle display
-              if (_subtitlesEnabled && _currentSubtitleText.isNotEmpty)
-                _buildSubtitleDisplay(),
             ],
+
+            // Subtitle display - ALWAYS on top of video but below controls
+            if (_subtitlesEnabled && _currentSubtitleText.isNotEmpty)
+              _buildSubtitleDisplay(),
 
             // Server Panel (top side)
             if (_showServerPanel) _buildServerPanel(),
@@ -1142,25 +1142,54 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   }
 
   Widget _buildSubtitleDisplay() {
+    // Position subtitles above the bottom controls
+    // When controls are visible: higher up to not overlap
+    // When controls are hidden: closer to bottom for better viewing
+    final bottomPadding = _showControls ? 140.0 : 50.0;
+
     return Positioned(
-      bottom: 100,
-      left: 20,
-      right: 20,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.7),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            _currentSubtitleText,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: _subtitleFontSize,
-              fontWeight: FontWeight.w500,
+      bottom: bottomPadding,
+      left: 16,
+      right: 16,
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          opacity: 1.0,
+          duration: const Duration(milliseconds: 200),
+          child: Center(
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.85,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.75),
+                borderRadius: BorderRadius.circular(6),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                _currentSubtitleText,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: _subtitleFontSize,
+                  fontWeight: FontWeight.w500,
+                  height: 1.3,
+                  shadows: [
+                    Shadow(
+                      color: Colors.black.withOpacity(0.8),
+                      blurRadius: 4,
+                      offset: const Offset(1, 1),
+                    ),
+                  ],
+                ),
+                textAlign: TextAlign.center,
+              ),
             ),
-            textAlign: TextAlign.center,
           ),
         ),
       ),
