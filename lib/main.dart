@@ -41,7 +41,7 @@ void main() async {
       logger.f(
         'ZONE',
         'Uncaught error in zone',
-        error: error,
+        error: error,                 
         stackTrace: stackTrace,
       );
     },

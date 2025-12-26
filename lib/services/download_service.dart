@@ -7,10 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/download_item.dart';
 import '../models/response/anime_model.dart';
 import '../models/response/episode_model.dart';
-import '../models/response/stream_response.dart';
 import '../utils/logger_service.dart';
 import 'api_service.dart';
-import 'storage_service.dart';
 
 /// Service for managing episode downloads
 class DownloadService extends GetxService {
@@ -270,10 +268,19 @@ class DownloadService extends GetxService {
       );
       await _saveDownloads();
 
-      // Fetch stream URL
-      final streamResponse = await _apiService.getStreamingLinks(
+      // Use the new MP4 download endpoint - server handles HLS to MP4 conversion!
+      final filename =
+          '${download.animeSlug}_ep${download.episodeNumber}_${download.serverType}';
+      final mp4Url = _apiService.getMp4DownloadUrl(
         episodeId: download.episodeId,
         serverType: download.serverType,
+        filename: filename,
+      );
+
+      logger.i(_tag, 'Downloading MP4 from: $mp4Url');
+      logger.i(
+        _tag,
+        '⚠️ Note: Download may take 1-5 minutes as server converts HLS to MP4',
       );
 
       if (_cancelTokens[key] == true) {
@@ -281,15 +288,16 @@ class DownloadService extends GetxService {
         return;
       }
 
-      // Get the video URL
-      String? videoUrl = _extractVideoUrl(streamResponse);
+      // Download the MP4 file directly
+      await _downloadMp4File(key, mp4Url, filename);
 
-      if (videoUrl == null) {
-        throw Exception('No video URL found');
-      }
-
-      // Download the video
-      await _downloadVideo(key, videoUrl);
+      // After video download, fetch and download subtitles
+      await _downloadSubtitlesForEpisode(
+        key,
+        download.episodeId,
+        download.serverType,
+        filename,
+      );
     } catch (e, stackTrace) {
       logger.e(_tag, 'Download failed', error: e, stackTrace: stackTrace);
 
@@ -304,8 +312,9 @@ class DownloadService extends GetxService {
 
       Get.snackbar(
         'Download Failed',
-        'Failed to download episode',
+        'Failed to download episode: ${e.toString().length > 50 ? '${e.toString().substring(0, 50)}...' : e.toString()}',
         snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 3),
       );
     } finally {
       activeDownloadKey.value = null;
@@ -314,46 +323,296 @@ class DownloadService extends GetxService {
     }
   }
 
-  /// Extract video URL from stream response
-  String? _extractVideoUrl(StreamResponse? response) {
-    if (response == null) return null;
-
-    // Get base URL for relative URLs
-    final storageService = Get.find<StorageService>();
-    final baseUrl = storageService.getBaseUrlOrDefault();
-
-    // Try to get URL from streams
-    for (final stream in response.streams) {
-      for (final source in stream.sources) {
-        if (source.proxyUrl != null && source.proxyUrl!.isNotEmpty) {
-          String url = source.proxyUrl!;
-          // Check if it's a relative URL and prepend base URL
-          if (url.startsWith('/')) {
-            url = baseUrl + url;
-          }
-          return url;
-        }
-        if (source.file.isNotEmpty) {
-          String url = source.file;
-          // Check if it's a relative URL and prepend base URL
-          if (url.startsWith('/')) {
-            url = baseUrl + url;
-          }
-          return url;
-        }
-      }
-    }
-    return null;
-  }
-
   // Dio instance for downloads
   final Dio _dio = Dio();
 
   // Active cancel tokens for Dio
   final Map<String, CancelToken> _dioCancelTokens = {};
 
-  /// Download video file
-  Future<void> _downloadVideo(String key, String url) async {
+  /// Download MP4 file directly from the new /api/download/mp4/ endpoint
+  /// This is the RECOMMENDED method - server handles HLS to MP4 conversion
+  Future<void> _downloadMp4File(
+    String key,
+    String mp4Url,
+    String filename,
+  ) async {
+    final downloadIndex = downloads.indexWhere((d) => d.key == key);
+    if (downloadIndex == -1) return;
+
+    final download = downloads[downloadIndex];
+    final dir = await _downloadsDir;
+    final filePath = '${dir.path}/$filename.mp4';
+
+    final cancelToken = CancelToken();
+    _dioCancelTokens[key] = cancelToken;
+
+    try {
+      logger.i(_tag, 'Starting MP4 download to: $filePath');
+
+      // Configure Dio for large file download with longer timeout
+      final downloadDio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(minutes: 2),
+          receiveTimeout: const Duration(
+            minutes: 30,
+          ), // MP4 conversion can take time
+          sendTimeout: const Duration(minutes: 2),
+        ),
+      );
+
+      await downloadDio.download(
+        mp4Url,
+        filePath,
+        cancelToken: cancelToken,
+        onReceiveProgress: (received, total) {
+          // Server may not always send content-length for streamed response
+          if (total > 0) {
+            final progress = received / total;
+            final idx = downloads.indexWhere((d) => d.key == key);
+            if (idx != -1) {
+              downloads[idx] = downloads[idx].copyWith(
+                progress: progress,
+                fileSize: total,
+              );
+            }
+          } else {
+            // Unknown total size - show bytes downloaded
+            final idx = downloads.indexWhere((d) => d.key == key);
+            if (idx != -1) {
+              downloads[idx] = downloads[idx].copyWith(fileSize: received);
+            }
+            // Log progress periodically
+            if (received % (5 * 1024 * 1024) < 100000) {
+              // Every ~5MB
+              logger.d(_tag, 'Downloaded ${_formatFileSize(received)}...');
+            }
+          }
+        },
+      );
+
+      // Verify file was downloaded
+      final file = File(filePath);
+      if (!await file.exists()) {
+        throw Exception('Downloaded file not found');
+      }
+
+      final fileSize = await file.length();
+      if (fileSize < 1000) {
+        // File too small, likely an error response
+        final content = await file.readAsString();
+        await file.delete();
+        throw Exception('Download failed: $content');
+      }
+
+      // Mark as completed (subtitles will be added separately)
+      downloads[downloadIndex] = downloads[downloadIndex].copyWith(
+        status: DownloadStatus.completed,
+        progress: 1.0,
+        filePath: filePath,
+        fileSize: fileSize,
+      );
+      await _saveDownloads();
+
+      logger.i(_tag, '✅ Video download complete: ${_formatFileSize(fileSize)}');
+
+      Get.snackbar(
+        'Download Complete',
+        'Episode downloaded (${_formatFileSize(fileSize)}). Downloading subtitles...',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+      );
+    } catch (e) {
+      logger.e(_tag, 'MP4 download failed', error: e);
+      final file = File(filePath);
+      if (await file.exists()) await file.delete();
+      rethrow;
+    } finally {
+      _dioCancelTokens.remove(key);
+    }
+  }
+
+  /// Download all available subtitles for an episode
+  Future<void> _downloadSubtitlesForEpisode(
+    String key,
+    String episodeId,
+    String serverType,
+    String baseFilename,
+  ) async {
+    try {
+      logger.i(_tag, 'Fetching subtitles for episode: $episodeId');
+
+      // Get stream data to find available subtitles
+      final streamResponse = await _apiService.getStreamingLinks(
+        episodeId: episodeId,
+        serverType: serverType,
+        includeProxy: true,
+      );
+
+      if (!streamResponse.success || streamResponse.streams.isEmpty) {
+        logger.w(_tag, 'No stream data available for subtitles');
+        return;
+      }
+
+      // Get subtitles from the first stream (they're usually the same across servers)
+      final subtitles = streamResponse.streams.first.subtitles;
+
+      if (subtitles.isEmpty) {
+        logger.i(_tag, 'No subtitles available for this episode');
+        return;
+      }
+
+      logger.i(_tag, 'Found ${subtitles.length} subtitle tracks to download');
+
+      final dir = await _downloadsDir;
+      final subtitleDir = Directory('${dir.path}/subtitles');
+      if (!await subtitleDir.exists()) {
+        await subtitleDir.create(recursive: true);
+      }
+
+      final downloadedSubtitles = <DownloadedSubtitle>[];
+
+      for (var i = 0; i < subtitles.length; i++) {
+        final subtitle = subtitles[i];
+
+        if (subtitle.file.isEmpty) continue;
+
+        try {
+          // Create a clean filename for the subtitle
+          final subtitleFilename =
+              '${baseFilename}_${_sanitizeFilename(subtitle.label)}.vtt';
+          final subtitlePath = '${subtitleDir.path}/$subtitleFilename';
+
+          logger.d(
+            _tag,
+            'Downloading subtitle: ${subtitle.label} from ${subtitle.file}',
+          );
+
+          // Download the subtitle file
+          final response = await _dio.get(
+            subtitle.file,
+            options: Options(
+              responseType: ResponseType.plain,
+              headers: {
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://megacloud.tv/',
+              },
+            ),
+          );
+
+          if (response.statusCode == 200 && response.data != null) {
+            final subtitleContent = response.data.toString();
+
+            // Save the subtitle file
+            final subtitleFile = File(subtitlePath);
+            await subtitleFile.writeAsString(subtitleContent);
+
+            // Extract language from label (e.g., "English" -> "en")
+            final language = _extractLanguageCode(subtitle.label);
+
+            downloadedSubtitles.add(
+              DownloadedSubtitle(
+                label: subtitle.label,
+                language: language,
+                filePath: subtitlePath,
+              ),
+            );
+
+            logger.d(_tag, '✅ Downloaded subtitle: ${subtitle.label}');
+          }
+        } catch (e) {
+          logger.w(_tag, 'Failed to download subtitle ${subtitle.label}: $e');
+          // Continue with other subtitles even if one fails
+        }
+      }
+
+      // Update the download item with subtitles
+      if (downloadedSubtitles.isNotEmpty) {
+        final downloadIndex = downloads.indexWhere((d) => d.key == key);
+        if (downloadIndex != -1) {
+          downloads[downloadIndex] = downloads[downloadIndex].copyWith(
+            subtitles: downloadedSubtitles,
+          );
+          await _saveDownloads();
+
+          logger.i(
+            _tag,
+            '✅ Downloaded ${downloadedSubtitles.length} subtitle tracks',
+          );
+
+          Get.snackbar(
+            'Subtitles Downloaded',
+            '${downloadedSubtitles.length} subtitle(s) available for offline viewing',
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 2),
+          );
+        }
+      }
+    } catch (e) {
+      logger.w(_tag, 'Failed to download subtitles: $e');
+      // Don't throw - subtitles are optional, video is already downloaded
+    }
+  }
+
+  /// Sanitize filename to remove invalid characters
+  String _sanitizeFilename(String name) {
+    return name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .toLowerCase();
+  }
+
+  /// Extract language code from subtitle label
+  String _extractLanguageCode(String label) {
+    final labelLower = label.toLowerCase();
+
+    // Common language mappings
+    if (labelLower.contains('english')) return 'en';
+    if (labelLower.contains('spanish') || labelLower.contains('español'))
+      return 'es';
+    if (labelLower.contains('french') || labelLower.contains('français'))
+      return 'fr';
+    if (labelLower.contains('german') || labelLower.contains('deutsch'))
+      return 'de';
+    if (labelLower.contains('portuguese') || labelLower.contains('português'))
+      return 'pt';
+    if (labelLower.contains('italian') || labelLower.contains('italiano'))
+      return 'it';
+    if (labelLower.contains('russian') || labelLower.contains('русский'))
+      return 'ru';
+    if (labelLower.contains('japanese') || labelLower.contains('日本語'))
+      return 'ja';
+    if (labelLower.contains('korean') || labelLower.contains('한국어'))
+      return 'ko';
+    if (labelLower.contains('chinese') || labelLower.contains('中文'))
+      return 'zh';
+    if (labelLower.contains('arabic') || labelLower.contains('العربية'))
+      return 'ar';
+    if (labelLower.contains('hindi') || labelLower.contains('हिन्दी'))
+      return 'hi';
+    if (labelLower.contains('indonesian')) return 'id';
+    if (labelLower.contains('malay')) return 'ms';
+    if (labelLower.contains('thai') || labelLower.contains('ไทย')) return 'th';
+    if (labelLower.contains('vietnamese') || labelLower.contains('tiếng việt'))
+      return 'vi';
+    if (labelLower.contains('turkish') || labelLower.contains('türkçe'))
+      return 'tr';
+    if (labelLower.contains('polish') || labelLower.contains('polski'))
+      return 'pl';
+    if (labelLower.contains('dutch') || labelLower.contains('nederlands'))
+      return 'nl';
+
+    return 'unknown';
+  }
+
+  /// Download video file (legacy method for HLS streams)
+  /// Kept for fallback in case MP4 endpoint has issues
+  // ignore: unused_element
+  Future<void> _downloadVideo(
+    String key,
+    String url, {
+    Map<String, String>? headers,
+  }) async {
     final downloadIndex = downloads.indexWhere((d) => d.key == key);
     if (downloadIndex == -1) return;
 
@@ -363,11 +622,17 @@ class DownloadService extends GetxService {
         '${download.animeSlug}_ep${download.episodeNumber}_${download.serverType}.ts';
     final filePath = '${dir.path}/$fileName';
 
+    // Merge custom headers with default headers
+    final requestHeaders = {
+      ..._getHlsHeaders(url),
+      if (headers != null) ...headers,
+    };
+
     try {
       // Check for m3u8/HLS streams
       if (url.contains('m3u8')) {
         logger.i(_tag, 'HLS stream detected, downloading segments: $url');
-        await _downloadHlsStream(key, url, filePath);
+        await _downloadHlsStream(key, url, filePath, customHeaders: headers);
         return;
       }
 
@@ -375,10 +640,13 @@ class DownloadService extends GetxService {
       final cancelToken = CancelToken();
       _dioCancelTokens[key] = cancelToken;
 
+      logger.i(_tag, 'Starting direct download: $url');
+
       await _dio.download(
         url,
         filePath,
         cancelToken: cancelToken,
+        options: Options(headers: requestHeaders),
         onReceiveProgress: (received, total) {
           if (total > 0) {
             final progress = received / total;
@@ -419,15 +687,32 @@ class DownloadService extends GetxService {
     }
   }
 
-  /// Get headers for HLS requests
+  /// Get headers for HLS requests based on URL domain
   Map<String, String> _getHlsHeaders(String url) {
-    final baseUrl = _apiService.baseUrl;
+    final uri = Uri.tryParse(url);
+    final host = uri?.host ?? '';
+
+    // Different CDNs require different Referer headers
+    // Based on STREAMING_API_IMPLEMENTATION.md documentation
+    String referer = 'https://megacloud.blog/';
+    String origin = 'https://megacloud.blog';
+
+    // If URL is a proxy URL from our API, use the API as referer
+    if (host.contains('hianime-api') ||
+        host.contains('onrender.com') ||
+        host.contains('localhost')) {
+      final baseUrl = _apiService.baseUrl;
+      referer = baseUrl;
+      origin = baseUrl;
+    }
+
     return {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+      'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
       'Accept': '*/*',
       'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': baseUrl,
-      'Origin': baseUrl,
+      'Referer': referer,
+      'Origin': origin,
     };
   }
 
@@ -435,14 +720,21 @@ class DownloadService extends GetxService {
   Future<void> _downloadHlsStream(
     String key,
     String m3u8Url,
-    String outputPath,
-  ) async {
+    String outputPath, {
+    Map<String, String>? customHeaders,
+  }) async {
     final downloadIndex = downloads.indexWhere((d) => d.key == key);
     if (downloadIndex == -1) return;
 
     final download = downloads[downloadIndex];
     final cancelToken = CancelToken();
     _dioCancelTokens[key] = cancelToken;
+
+    // Merge custom headers with default headers
+    final requestHeaders = {
+      ..._getHlsHeaders(m3u8Url),
+      if (customHeaders != null) ...customHeaders,
+    };
 
     try {
       logger.i(_tag, 'Fetching HLS playlist: $m3u8Url');
@@ -451,9 +743,7 @@ class DownloadService extends GetxService {
       final response = await _dio.get(
         m3u8Url,
         cancelToken: cancelToken,
-        options: Options(
-          headers: _getHlsHeaders(m3u8Url),
-        ),
+        options: Options(headers: requestHeaders),
       );
 
       if (_cancelTokens[key] == true) {
@@ -472,7 +762,12 @@ class DownloadService extends GetxService {
         final streamUrl = _extractBestQualityStream(playlistContent, m3u8Url);
         if (streamUrl != null) {
           logger.i(_tag, 'Found master playlist, fetching stream: $streamUrl');
-          await _downloadHlsStream(key, streamUrl, outputPath);
+          await _downloadHlsStream(
+            key,
+            streamUrl,
+            outputPath,
+            customHeaders: customHeaders,
+          );
           return;
         }
         throw Exception('No video segments found in playlist');
@@ -504,14 +799,18 @@ class DownloadService extends GetxService {
           '${tempDir.path}/segment_${i.toString().padLeft(5, '0')}.ts',
         );
 
+        // Merge custom headers with segment headers
+        final segmentHeaders = {
+          ..._getHlsHeaders(segmentUrl),
+          if (customHeaders != null) ...customHeaders,
+        };
+
         try {
-          final segmentResponse = await _dio.download(
+          await _dio.download(
             segmentUrl,
             segmentFile.path,
             cancelToken: cancelToken,
-            options: Options(
-              headers: _getHlsHeaders(segmentUrl),
-            ),
+            options: Options(headers: segmentHeaders),
           );
 
           segmentFiles.add(segmentFile);
@@ -745,11 +1044,23 @@ class DownloadService extends GetxService {
     _cancelTokens[key] = true;
     downloadQueue.remove(key);
 
-    // Delete file if exists
+    // Delete video file if exists
     if (download.filePath != null) {
       final file = File(download.filePath!);
       if (await file.exists()) {
         await file.delete();
+      }
+    }
+
+    // Delete subtitle files if they exist
+    for (final subtitle in download.subtitles) {
+      try {
+        final subtitleFile = File(subtitle.filePath);
+        if (await subtitleFile.exists()) {
+          await subtitleFile.delete();
+        }
+      } catch (e) {
+        logger.w(_tag, 'Failed to delete subtitle file: ${subtitle.filePath}');
       }
     }
 
@@ -767,6 +1078,57 @@ class DownloadService extends GetxService {
     for (final download in toDelete) {
       await deleteDownload(download.key);
     }
+  }
+
+  /// Delete all downloads
+  Future<void> deleteAllDownloads() async {
+    // Cancel any active downloads first
+    for (final key in _cancelTokens.keys) {
+      _cancelTokens[key] = true;
+    }
+    downloadQueue.clear();
+
+    // Delete all download files
+    final toDelete = downloads.toList();
+    for (final download in toDelete) {
+      if (download.filePath != null) {
+        final file = File(download.filePath!);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+    }
+
+    // Clear the downloads list
+    downloads.clear();
+    await _saveDownloads();
+
+    // Clean up temp directories
+    final dir = await _downloadsDir;
+    final contents = dir.listSync();
+    for (final entity in contents) {
+      if (entity is Directory && entity.path.contains('temp_')) {
+        await entity.delete(recursive: true);
+      }
+    }
+
+    logger.logUserAction('Deleted all downloads');
+  }
+
+  /// Delete only completed downloads
+  Future<void> deleteCompletedDownloads() async {
+    final toDelete = downloads
+        .where((d) => d.status == DownloadStatus.completed)
+        .toList();
+
+    for (final download in toDelete) {
+      await deleteDownload(download.key);
+    }
+
+    logger.logUserAction(
+      'Deleted completed downloads',
+      details: {'count': toDelete.length},
+    );
   }
 
   /// Retry a failed download

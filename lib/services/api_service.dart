@@ -7,6 +7,7 @@ import '../models/response/anime_list_response.dart';
 import '../models/response/episode_list_response.dart';
 import '../models/response/anime_model.dart';
 import '../models/response/stream_response.dart';
+import '../models/response/download_response.dart';
 import '../utils/logger_service.dart';
 import 'storage_service.dart';
 
@@ -215,6 +216,77 @@ class ApiService {
       uri: uri,
       parser: (json) => StreamResponse.fromJson(json),
     );
+  }
+
+  /// Get download links for an episode (old endpoint - kept for compatibility)
+  ///
+  /// [episodeId] - Episode ID (e.g., "147365")
+  /// [serverType] - "sub", "dub", or "all"
+  /// [quality] - "auto", "1080p", "720p", "480p", "360p"
+  Future<DownloadResponse> getDownloadLinks({
+    required String episodeId,
+    String serverType = 'sub',
+    String quality = 'auto',
+  }) async {
+    logger.i(_tag, 'Getting download links for episode: $episodeId');
+
+    final uri = Uri.parse(
+      '$baseUrl/api/download/$episodeId',
+    ).replace(queryParameters: {'server_type': serverType, 'quality': quality});
+
+    return _executeRequest(
+      method: 'GET',
+      uri: uri,
+      parser: (json) => DownloadResponse.fromJson(json),
+    );
+  }
+
+  /// Get MP4 download URL for an episode (NEW - Recommended!)
+  ///
+  /// This endpoint directly downloads the video as MP4.
+  /// The server handles HLS to MP4 conversion via FFmpeg.
+  ///
+  /// [episodeId] - Episode ID (e.g., "147365")
+  /// [serverType] - "sub" (default) or "dub"
+  /// [serverIndex] - Which server to use (0 = first/best)
+  /// [filename] - Custom filename (without .mp4 extension)
+  String getMp4DownloadUrl({
+    required String episodeId,
+    String serverType = 'sub',
+    int serverIndex = 0,
+    String? filename,
+  }) {
+    final queryParams = <String, String>{
+      'server_type': serverType,
+      'server_index': serverIndex.toString(),
+    };
+
+    if (filename != null && filename.isNotEmpty) {
+      queryParams['filename'] = filename;
+    }
+
+    final uri = Uri.parse(
+      '$baseUrl/api/download/mp4/$episodeId',
+    ).replace(queryParameters: queryParams);
+
+    return uri.toString();
+  }
+
+  /// Check if FFmpeg is available on the server
+  Future<bool> checkFfmpegStatus() async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/download/mp4/check');
+      final response = await _client.get(uri);
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        return json['ffmpeg_available'] == true;
+      }
+      return false;
+    } catch (e) {
+      logger.w(_tag, 'Failed to check FFmpeg status: $e');
+      return false;
+    }
   }
 
   void dispose() {

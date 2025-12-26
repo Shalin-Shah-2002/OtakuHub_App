@@ -36,7 +36,7 @@ class DownloadsScreen extends StatelessWidget {
           // Storage info
           Obx(
             () => Padding(
-              padding: const EdgeInsets.only(right: 16),
+              padding: const EdgeInsets.only(right: 8),
               child: Center(
                 child: Text(
                   downloadService.totalDownloadSizeFormatted,
@@ -47,6 +47,43 @@ class DownloadsScreen extends StatelessWidget {
                 ),
               ),
             ),
+          ),
+          // Clear all downloads button
+          Obx(
+            () => downloadService.downloads.isNotEmpty
+                ? PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) {
+                      if (value == 'clear_all') {
+                        _showClearAllDialog(context, downloadService);
+                      } else if (value == 'clear_completed') {
+                        _clearCompletedDownloads(context, downloadService);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'clear_completed',
+                        child: Row(
+                          children: [
+                            Icon(Icons.cleaning_services, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Text('Clear Completed'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'clear_all',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_forever, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text('Delete All Downloads'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
@@ -115,6 +152,128 @@ class DownloadsScreen extends StatelessWidget {
           ),
         );
       }),
+    );
+  }
+
+  void _showClearAllDialog(BuildContext context, DownloadService service) {
+    final totalCount = service.downloads.length;
+    final totalSize = service.totalDownloadSizeFormatted;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            SizedBox(width: 8),
+            Text('Delete All Downloads?'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will permanently delete all $totalCount downloaded episodes from your device.',
+              style: const TextStyle(fontSize: 15),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.storage, color: Colors.red, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Storage to be freed: $totalSize',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await service.deleteAllDownloads();
+              Get.snackbar(
+                'Downloads Cleared',
+                'All downloads have been deleted',
+                snackPosition: SnackPosition.BOTTOM,
+                backgroundColor: Colors.green,
+                colorText: Colors.white,
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _clearCompletedDownloads(BuildContext context, DownloadService service) {
+    final completedCount = service.downloads
+        .where((d) => d.status == DownloadStatus.completed)
+        .length;
+
+    if (completedCount == 0) {
+      Get.snackbar(
+        'No Completed Downloads',
+        'There are no completed downloads to clear',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Completed Downloads?'),
+        content: Text(
+          'Delete $completedCount completed download${completedCount != 1 ? 's' : ''}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await service.deleteCompletedDownloads();
+              Get.snackbar(
+                'Downloads Cleared',
+                '$completedCount completed downloads deleted',
+                snackPosition: SnackPosition.BOTTOM,
+                backgroundColor: Colors.green,
+                colorText: Colors.white,
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -293,77 +452,175 @@ class _EpisodeDownloadTile extends StatelessWidget {
     final downloadService = Get.find<DownloadService>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: _buildStatusIcon(),
-      title: Text(
-        'Episode ${download.episodeNumber}',
-        style: const TextStyle(fontWeight: FontWeight.w500),
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (download.episodeTitle != null)
+    // Wrap with Dismissible for swipe-to-delete
+    return Dismissible(
+      key: Key(download.key),
+      direction:
+          download.status == DownloadStatus.downloading ||
+              download.status == DownloadStatus.pending
+          ? DismissDirection.none
+          : DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: Colors.red,
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Icon(Icons.delete_forever, color: Colors.white),
+            SizedBox(width: 8),
             Text(
-              download.episodeTitle!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              'Delete',
               style: TextStyle(
-                fontSize: 12,
-                color: isDark ? Colors.white54 : Colors.black45,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
               ),
             ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              // Server type badge
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: download.serverType == 'sub'
-                      ? Colors.blue.withOpacity(0.2)
-                      : Colors.purple.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(4),
+          ],
+        ),
+      ),
+      confirmDismiss: (direction) async {
+        return await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Delete Download?'),
+                content: Text(
+                  'Delete Episode ${download.episodeNumber} of "${download.animeTitle}"?\n\nThis will remove the file from your device.',
                 ),
-                child: Text(
-                  download.serverType.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: download.serverType == 'sub'
-                        ? Colors.blue
-                        : Colors.purple,
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Cancel'),
                   ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Delete'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+      },
+      onDismissed: (direction) {
+        downloadService.deleteDownload(download.key);
+        Get.snackbar(
+          'Download Deleted',
+          'Episode ${download.episodeNumber} has been removed',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 2),
+        );
+      },
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: _buildStatusIcon(),
+        title: Text(
+          'Episode ${download.episodeNumber}',
+          style: const TextStyle(fontWeight: FontWeight.w500),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (download.episodeTitle != null)
+              Text(
+                download.episodeTitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white54 : Colors.black45,
                 ),
               ),
-              const SizedBox(width: 8),
-              // File size or progress
-              if (download.status == DownloadStatus.downloading)
-                Expanded(
-                  child: LinearProgressIndicator(
-                    value: download.progress,
-                    backgroundColor: Colors.grey.withOpacity(0.3),
-                    valueColor: const AlwaysStoppedAnimation(
-                      OnePieceTheme.grandLineBlue,
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                // Server type badge
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: download.serverType == 'sub'
+                        ? Colors.blue.withOpacity(0.2)
+                        : Colors.purple.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    download.serverType.toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: download.serverType == 'sub'
+                          ? Colors.blue
+                          : Colors.purple,
                     ),
                   ),
-                )
-              else if (download.fileSize != null && download.fileSize! > 0)
-                Text(
-                  download.fileSizeFormatted,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isDark ? Colors.white38 : Colors.black38,
-                  ),
                 ),
-            ],
-          ),
-        ],
+                const SizedBox(width: 8),
+                // Subtitle indicator
+                if (download.subtitles.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.subtitles,
+                          size: 10,
+                          color: Colors.green.shade700,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${download.subtitles.length}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (download.subtitles.isNotEmpty) const SizedBox(width: 8),
+                // File size or progress
+                if (download.status == DownloadStatus.downloading)
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: download.progress,
+                      backgroundColor: Colors.grey.withOpacity(0.3),
+                      valueColor: const AlwaysStoppedAnimation(
+                        OnePieceTheme.grandLineBlue,
+                      ),
+                    ),
+                  )
+                else if (download.fileSize != null && download.fileSize! > 0)
+                  Text(
+                    download.fileSizeFormatted,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white38 : Colors.black38,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        trailing: _buildTrailingAction(context, downloadService),
+        onTap: download.status == DownloadStatus.completed
+            ? () => _playDownload(context)
+            : null,
       ),
-      trailing: _buildTrailingAction(context, downloadService),
-      onTap: download.status == DownloadStatus.completed
-          ? () => _playDownload(context)
-          : null,
     );
   }
 
@@ -494,6 +751,7 @@ class _EpisodeDownloadTile extends StatelessWidget {
           serverType: download.serverType,
           offlineFilePath: download.filePath,
           offlineStreamUrl: download.streamUrl,
+          offlineSubtitles: download.subtitles, // Pass downloaded subtitles
         ),
       ),
     );

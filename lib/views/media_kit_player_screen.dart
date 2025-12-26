@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/response/stream_response.dart';
+import '../models/download_item.dart';
 import '../services/api_service.dart';
 import '../utils/one_piece_theme.dart';
 import '../utils/logger_service.dart';
@@ -28,6 +29,7 @@ class MediaKitPlayerScreen extends StatefulWidget {
   final String serverType;
   final String? offlineFilePath;
   final String? offlineStreamUrl;
+  final List<DownloadedSubtitle>? offlineSubtitles; // Offline subtitle files
 
   const MediaKitPlayerScreen({
     super.key,
@@ -39,6 +41,7 @@ class MediaKitPlayerScreen extends StatefulWidget {
     this.serverType = 'sub',
     this.offlineFilePath,
     this.offlineStreamUrl,
+    this.offlineSubtitles,
   });
 
   @override
@@ -73,10 +76,11 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   // Subtitles
   bool _showSubtitlePanel = false;
   int _selectedSubtitleIndex = 0;
-  final List<SubtitleCue> _subtitleCues = [];
-  final String _currentSubtitleText = '';
+  List<SubtitleCue> _subtitleCues = [];
+  String _currentSubtitleText = '';
   double _subtitleFontSize = 16.0;
   bool _subtitlesEnabled = true;
+  List<DownloadedSubtitle> _offlineSubtitlesList = []; // For offline playback
 
   // Fullscreen
   bool _isFullscreen = true;
@@ -91,12 +95,14 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   Duration _duration = Duration.zero;
   Duration _buffer = Duration.zero;
   bool _playbackStartedSuccessfully = false; // Track if video started playing
+  bool _isBuffering = false; // Track buffering state for smooth UX
 
   // Auto server switch tracking
   bool _isAutoSwitching = false;
   int _currentServerRetries = 0; // Retries for current server
   int _totalServersSwitched = 0; // Total servers tried
-  static const int _maxRetriesPerServer = 2; // Quick retry - only 2 times before switching
+  static const int _maxRetriesPerServer =
+      2; // Quick retry - only 2 times before switching
   static const int _maxTotalServers = 6; // Max total servers to try
 
   @override
@@ -104,11 +110,12 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
     super.initState();
     _selectedServerType = widget.serverType;
 
-    // Initialize media_kit player with optimized configuration for fast playback
+    // Initialize media_kit player with OPTIMIZED configuration for instant playback
+    // These settings mirror how professional streaming sites (HiAnime, Netflix) achieve smooth playback
     _player = Player(
       configuration: PlayerConfiguration(
-        // Optimize for streaming - start playing ASAP
-        bufferSize: 32 * 1024 * 1024, // 32MB buffer
+        // Buffer size for smooth playback - 150MB demuxer cache (increased for less buffering)
+        bufferSize: 150 * 1024 * 1024,
       ),
     );
     _videoController = VideoController(
@@ -117,6 +124,9 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
         enableHardwareAcceleration: true, // Use GPU for faster decoding
       ),
     );
+
+    // Apply MPV optimizations for fast startup and reduced buffering
+    _applyStreamingOptimizations();
 
     // Enable wakelock
     WakelockPlus.enable();
@@ -138,6 +148,100 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
     // Start auto-hide timer for controls
     _startHideControlsTimer();
+  }
+
+  /// Apply MPV streaming optimizations for fast startup and reduced buffering
+  /// These settings are applied after player initialization using NativePlayer.setProperty
+  Future<void> _applyStreamingOptimizations() async {
+    // Access the native player to set MPV properties
+    if (_player.platform is NativePlayer) {
+      final nativePlayer = _player.platform as NativePlayer;
+
+      try {
+        // ═══════════════════════════════════════════════════════════════════════
+        // AGGRESSIVE CACHE SETTINGS - Prevent mid-playback buffering
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty('cache', 'yes');
+        await nativePlayer.setProperty(
+          'cache-secs',
+          '300',
+        ); // Cache 5 MINUTES ahead!
+        await nativePlayer.setProperty(
+          'cache-pause-initial',
+          'no',
+        ); // Start immediately
+        await nativePlayer.setProperty(
+          'cache-pause-wait',
+          '3',
+        ); // Resume when 3s buffered
+        await nativePlayer.setProperty(
+          'cache-on-disk',
+          'yes',
+        ); // Use disk cache too
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // DEMUXER SETTINGS - Aggressive buffering for HLS streams
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty(
+          'demuxer-readahead-secs',
+          '60',
+        ); // Read 60s ahead
+        await nativePlayer.setProperty(
+          'demuxer-max-bytes',
+          '150M',
+        ); // 150MB demuxer buffer
+        await nativePlayer.setProperty(
+          'demuxer-max-back-bytes',
+          '75M',
+        ); // 75MB back buffer
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NETWORK OPTIMIZATION - Critical for streaming stability
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty(
+          'network-timeout',
+          '60',
+        ); // Longer timeout
+
+        // FFmpeg/lavf options for HLS reconnection and stability
+        // This is the KEY setting for preventing buffering!
+        await nativePlayer.setProperty(
+          'demuxer-lavf-o',
+          'reconnect=1,reconnect_streamed=1,reconnect_delay_max=5,reconnect_on_network_error=1,reconnect_on_http_error=4xx,reconnect_on_http_error=5xx,fflags=+discardcorrupt+genpts,analyzeduration=0,probesize=32768',
+        );
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // HLS SPECIFIC - Optimize for anime streaming
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty('hls-bitrate', 'max'); // Best quality
+        await nativePlayer.setProperty('force-seekable', 'yes');
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEEKING OPTIMIZATION
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty('hr-seek', 'yes');
+        await nativePlayer.setProperty('hr-seek-framedrop', 'yes');
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // VIDEO OUTPUT OPTIMIZATION
+        // ═══════════════════════════════════════════════════════════════════════
+        await nativePlayer.setProperty('video-sync', 'audio'); // Sync to audio
+        await nativePlayer.setProperty(
+          'framedrop',
+          'vo',
+        ); // Drop frames if needed
+
+        logger.i(
+          'MediaKitPlayer',
+          'Applied AGGRESSIVE streaming optimizations',
+        );
+      } catch (e) {
+        logger.w(
+          'MediaKitPlayer',
+          'Failed to apply some streaming optimizations: $e',
+        );
+      }
+    }
   }
 
   void _startHideControlsTimer() {
@@ -214,6 +318,13 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       }
     });
 
+    // Listen to buffering state for smooth UX indicator
+    _player.stream.buffering.listen((buffering) {
+      if (mounted) {
+        setState(() => _isBuffering = buffering);
+      }
+    });
+
     _player.stream.completed.listen((completed) {
       if (completed && mounted) {
         // Video completed
@@ -227,21 +338,27 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
         // CRITICAL: Don't switch servers if video has already played successfully!
         // Once playback started, we should NOT auto-switch
         if (_playbackStartedSuccessfully) {
-          logger.w('MediaKitPlayer', 'Ignoring error - playback already started: $error');
+          logger.w(
+            'MediaKitPlayer',
+            'Ignoring error - playback already started: $error',
+          );
           return;
         }
-        
+
         // CRITICAL: Don't switch servers if video is actually playing!
         // Some errors are non-fatal and playback continues fine
         if (_isPlaying || _position.inSeconds > 0 || _buffer.inSeconds > 2) {
-          logger.w('MediaKitPlayer', 'Ignoring error - video is playing: $error');
+          logger.w(
+            'MediaKitPlayer',
+            'Ignoring error - video is playing: $error',
+          );
           _playbackStartedSuccessfully = true; // Mark as successful
           return;
         }
-        
+
         // Ignore audio device errors (common on iOS Simulator)
         // The video can still play, just without audio on simulator
-        if (error.contains('audio device') || 
+        if (error.contains('audio device') ||
             error.contains('no sound') ||
             error.contains('Audio output') ||
             error.contains('audio') ||
@@ -250,7 +367,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
           // Don't trigger retry for audio-only issues
           return;
         }
-        
+
         logger.e('MediaKitPlayer', 'Player error: $error');
         _handlePlaybackError();
       }
@@ -259,9 +376,12 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
   void _handlePlaybackError() {
     _currentServerRetries++;
-    
-    logger.i('MediaKitPlayer', 'Playback error - retry $_currentServerRetries/$_maxRetriesPerServer for current server');
-    
+
+    logger.i(
+      'MediaKitPlayer',
+      'Playback error - retry $_currentServerRetries/$_maxRetriesPerServer for current server',
+    );
+
     if (_currentServerRetries < _maxRetriesPerServer) {
       // Retry the same server
       _retryCurrentServer();
@@ -269,14 +389,15 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       // Max retries for this server, switch to next
       _currentServerRetries = 0;
       _totalServersSwitched++;
-      
+
       if (_totalServersSwitched < _maxTotalServers) {
         _autoSwitchServer();
       } else {
         // All servers exhausted
         setState(() {
           _hasError = true;
-          _errorMessage = 'All servers failed after multiple retries. Tap retry or switch manually.';
+          _errorMessage =
+              'All servers failed after multiple retries. Tap retry or switch manually.';
           _isAutoSwitching = false;
           _isLoading = false;
         });
@@ -286,31 +407,37 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
   Future<void> _retryCurrentServer() async {
     if (_isAutoSwitching) return;
-    
+
     setState(() {
       _isAutoSwitching = true;
       _isLoading = true;
     });
-    
+
     final stream = _getCurrentStream();
-    logger.i('MediaKitPlayer', 'Retrying server ${stream?.serverName ?? "Unknown"} (attempt $_currentServerRetries/$_maxRetriesPerServer)');
-    
+    logger.i(
+      'MediaKitPlayer',
+      'Retrying server ${stream?.serverName ?? "Unknown"} (attempt $_currentServerRetries/$_maxRetriesPerServer)',
+    );
+
     // Quick retry - no delay for better UX
     await Future.delayed(const Duration(milliseconds: 300));
-    
+
     await _initializePlayer();
     setState(() => _isAutoSwitching = false);
   }
 
   Future<void> _autoSwitchServer() async {
     if (_isAutoSwitching) return;
-    
+
     setState(() {
       _isAutoSwitching = true;
       _isLoading = true;
     });
 
-    logger.i('MediaKitPlayer', 'Switching to next server (total switched: $_totalServersSwitched)');
+    logger.i(
+      'MediaKitPlayer',
+      'Switching to next server (total switched: $_totalServersSwitched)',
+    );
 
     final streams = _getCurrentStreams();
     final nextIndex = _selectedServerIndex + 1;
@@ -344,7 +471,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
     // Reset retry counter for new server
     _currentServerRetries = 0;
-    
+
     await _initializePlayer();
     setState(() => _isAutoSwitching = false);
   }
@@ -377,7 +504,27 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       }
 
       await _player.open(Media(widget.offlineFilePath!));
-      
+
+      // Load offline subtitles if available
+      if (widget.offlineSubtitles != null &&
+          widget.offlineSubtitles!.isNotEmpty) {
+        _offlineSubtitlesList = widget.offlineSubtitles!;
+        logger.i(
+          'MediaKitPlayer',
+          'Found ${_offlineSubtitlesList.length} offline subtitle tracks',
+        );
+
+        // Auto-select English subtitle if available, otherwise first one
+        final englishIndex = _offlineSubtitlesList.indexWhere(
+          (s) =>
+              s.language == 'en' || s.label.toLowerCase().contains('english'),
+        );
+        _selectedSubtitleIndex = englishIndex >= 0 ? englishIndex : 0;
+
+        // Load the selected subtitle
+        await _loadOfflineSubtitle(_selectedSubtitleIndex);
+      }
+
       setState(() => _isLoading = false);
       logger.i('MediaKitPlayer', 'Offline file loaded');
     } catch (e) {
@@ -403,11 +550,12 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
           httpHeaders: {
             'Referer': 'https://megacloud.tv/',
             'Origin': 'https://megacloud.tv',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           },
         ),
       );
-      
+
       setState(() => _isLoading = false);
       logger.i('MediaKitPlayer', 'Offline stream URL loaded');
     } catch (e) {
@@ -442,13 +590,15 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
             serverType: primaryType,
             includeProxy: true,
           )
-          .catchError((e) => StreamResponse(
-                success: false,
-                episodeId: widget.episodeId,
-                serverType: primaryType,
-                totalStreams: 0,
-                streams: [],
-              ));
+          .catchError(
+            (e) => StreamResponse(
+              success: false,
+              episodeId: widget.episodeId,
+              serverType: primaryType,
+              totalStreams: 0,
+              streams: [],
+            ),
+          );
 
       // Set primary stream data immediately
       if (primaryType == 'sub') {
@@ -493,13 +643,15 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
               serverType: secondaryType,
               includeProxy: true,
             )
-            .catchError((e) => StreamResponse(
-                  success: false,
-                  episodeId: widget.episodeId,
-                  serverType: secondaryType,
-                  totalStreams: 0,
-                  streams: [],
-                ));
+            .catchError(
+              (e) => StreamResponse(
+                success: false,
+                episodeId: widget.episodeId,
+                serverType: secondaryType,
+                totalStreams: 0,
+                streams: [],
+              ),
+            );
 
         if (secondaryType == 'sub') {
           _subStreamData = secondaryStream;
@@ -516,7 +668,12 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
         }
       }
     } catch (e, stackTrace) {
-      logger.e('MediaKitPlayer', 'Failed to load streams', error: e, stackTrace: stackTrace);
+      logger.e(
+        'MediaKitPlayer',
+        'Failed to load streams',
+        error: e,
+        stackTrace: stackTrace,
+      );
       setState(() {
         _hasError = true;
         _errorMessage = e.toString();
@@ -559,7 +716,8 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       final headers = source.headers.isNotEmpty
           ? source.headers
           : <String, String>{
-              'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+              'User-Agent':
+                  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
               'Referer': 'https://megacloud.blog/',
               'Origin': 'https://megacloud.blog',
             };
@@ -567,25 +725,29 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       // TRY PROXY URL FIRST - it's pre-processed and more reliable
       if (source.proxyUrl != null && source.proxyUrl!.isNotEmpty) {
         final proxyUrl = '${_apiService.baseUrl}${source.proxyUrl}';
-        logger.d('MediaKitPlayer', 'Trying proxy URL first (faster): $proxyUrl');
+        logger.d(
+          'MediaKitPlayer',
+          'Trying proxy URL first (faster): $proxyUrl',
+        );
 
         try {
           await _player.open(
             Media(
               proxyUrl,
               httpHeaders: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36',
+                'User-Agent':
+                    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36',
               },
             ),
           );
 
           // Start playback immediately - no delay!
           await _player.play();
-          
+
           // Hide loading immediately - let the player's own buffering indicator show
           setState(() => _isLoading = false);
           logger.i('MediaKitPlayer', 'Playing via proxy: $proxyUrl');
-          
+
           // Load subtitles in background (non-blocking)
           if (stream.subtitles.isNotEmpty) {
             Future.microtask(() => _loadSubtitles(stream.subtitles));
@@ -601,20 +763,15 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
       logger.d('MediaKitPlayer', 'Trying direct URL: $videoUrl');
 
       try {
-        await _player.open(
-          Media(
-            videoUrl,
-            httpHeaders: headers,
-          ),
-        );
+        await _player.open(Media(videoUrl, httpHeaders: headers));
 
         // Start playback immediately
         await _player.play();
-        
+
         // Hide loading immediately
         setState(() => _isLoading = false);
         logger.i('MediaKitPlayer', 'Playing direct URL: $videoUrl');
-        
+
         // Load subtitles in background
         if (stream.subtitles.isNotEmpty) {
           Future.microtask(() => _loadSubtitles(stream.subtitles));
@@ -666,12 +823,151 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
     if (subtitles.isEmpty || _selectedSubtitleIndex < 0) return;
 
     try {
-      final subtitle = subtitles[_selectedSubtitleIndex.clamp(0, subtitles.length - 1)];
+      final subtitle =
+          subtitles[_selectedSubtitleIndex.clamp(0, subtitles.length - 1)];
       // media_kit handles subtitles internally, but we can also parse VTT
       logger.i('MediaKitPlayer', 'Subtitles available: ${subtitle.label}');
     } catch (e) {
       logger.w('MediaKitPlayer', 'Failed to load subtitles: $e');
     }
+  }
+
+  /// Load and parse offline VTT subtitle file
+  Future<void> _loadOfflineSubtitle(int index) async {
+    if (_offlineSubtitlesList.isEmpty ||
+        index < 0 ||
+        index >= _offlineSubtitlesList.length) {
+      return;
+    }
+
+    try {
+      final subtitle = _offlineSubtitlesList[index];
+      final file = File(subtitle.filePath);
+
+      if (!await file.exists()) {
+        logger.w(
+          'MediaKitPlayer',
+          'Subtitle file not found: ${subtitle.filePath}',
+        );
+        return;
+      }
+
+      final content = await file.readAsString();
+      final cues = _parseVttSubtitles(content);
+
+      setState(() {
+        _subtitleCues = cues;
+        _selectedSubtitleIndex = index;
+        _currentSubtitleText =
+            ''; // Clear current text, will update with position
+      });
+
+      logger.i(
+        'MediaKitPlayer',
+        'Loaded ${cues.length} subtitle cues from ${subtitle.label}',
+      );
+    } catch (e) {
+      logger.e('MediaKitPlayer', 'Failed to load offline subtitle', error: e);
+    }
+  }
+
+  /// Parse VTT subtitle content into SubtitleCue list
+  List<SubtitleCue> _parseVttSubtitles(String content) {
+    final cues = <SubtitleCue>[];
+    final lines = content.split('\n');
+
+    int i = 0;
+
+    // Skip WebVTT header
+    while (i < lines.length && !lines[i].contains('-->')) {
+      i++;
+    }
+
+    while (i < lines.length) {
+      final line = lines[i].trim();
+
+      // Look for timestamp line (00:00:00.000 --> 00:00:00.000)
+      if (line.contains('-->')) {
+        final parts = line.split('-->');
+        if (parts.length == 2) {
+          final start = _parseVttTimestamp(parts[0].trim());
+          final end = _parseVttTimestamp(
+            parts[1].trim().split(' ').first,
+          ); // Handle positioning info
+
+          // Collect text lines until empty line or next timestamp
+          final textLines = <String>[];
+          i++;
+          while (i < lines.length) {
+            final textLine = lines[i].trim();
+            if (textLine.isEmpty || textLine.contains('-->')) {
+              break;
+            }
+            // Skip cue identifiers (numeric or alphanumeric ids)
+            if (!RegExp(r'^\d+$').hasMatch(textLine) &&
+                !RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(textLine)) {
+              textLines.add(_cleanVttText(textLine));
+            }
+            i++;
+          }
+
+          if (textLines.isNotEmpty && start != null && end != null) {
+            cues.add(
+              SubtitleCue(start: start, end: end, text: textLines.join('\n')),
+            );
+          }
+          continue;
+        }
+      }
+      i++;
+    }
+
+    return cues;
+  }
+
+  /// Parse VTT timestamp (00:00:00.000 or 00:00.000)
+  Duration? _parseVttTimestamp(String timestamp) {
+    try {
+      // Handle both HH:MM:SS.mmm and MM:SS.mmm formats
+      final parts = timestamp.split(':');
+
+      int hours = 0;
+      int minutes = 0;
+      double seconds = 0;
+
+      if (parts.length == 3) {
+        hours = int.parse(parts[0]);
+        minutes = int.parse(parts[1]);
+        seconds = double.parse(parts[2].replaceAll(',', '.'));
+      } else if (parts.length == 2) {
+        minutes = int.parse(parts[0]);
+        seconds = double.parse(parts[1].replaceAll(',', '.'));
+      } else {
+        return null;
+      }
+
+      return Duration(
+        hours: hours,
+        minutes: minutes,
+        seconds: seconds.floor(),
+        milliseconds: ((seconds - seconds.floor()) * 1000).round(),
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Clean VTT text (remove HTML tags and formatting)
+  String _cleanVttText(String text) {
+    return text
+        .replaceAll(RegExp(r'<[^>]*>'), '') // Remove HTML tags
+        .replaceAll(RegExp(r'\{[^}]*\}'), '') // Remove ASS-style formatting
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .trim();
   }
 
   void _checkSkipButtons(Duration position) {
@@ -702,7 +998,26 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   }
 
   void _updateSubtitle(Duration position) {
-    // Subtitle update logic if needed
+    if (!_subtitlesEnabled || _subtitleCues.isEmpty) {
+      if (_currentSubtitleText.isNotEmpty) {
+        setState(() => _currentSubtitleText = '');
+      }
+      return;
+    }
+
+    // Find the subtitle cue that matches current position
+    String newText = '';
+    for (final cue in _subtitleCues) {
+      if (position >= cue.start && position <= cue.end) {
+        newText = cue.text;
+        break;
+      }
+    }
+
+    // Only update state if text changed
+    if (newText != _currentSubtitleText) {
+      setState(() => _currentSubtitleText = newText);
+    }
   }
 
   void _skipIntro() {
@@ -724,7 +1039,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
     _currentServerRetries = 0;
     _totalServersSwitched = 0;
     _playbackStartedSuccessfully = false; // Reset for new server
-    
+
     setState(() {
       _selectedServerType = type;
       _selectedServerIndex = index;
@@ -817,7 +1132,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
             // Server Panel (top side)
             if (_showServerPanel) _buildServerPanel(),
-            
+
             // Subtitle Settings Panel
             if (_showSubtitlePanel) _buildSubtitleSettingsPanel(),
           ],
@@ -855,16 +1170,17 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   Widget _buildLoadingState() {
     final stream = _getCurrentStream();
     final serverName = stream?.serverName ?? 'Unknown';
-    
+
     String loadingMessage = 'Loading video...';
     if (_isAutoSwitching) {
       if (_currentServerRetries > 0) {
-        loadingMessage = 'Retrying... ($_currentServerRetries/$_maxRetriesPerServer)';
+        loadingMessage =
+            'Retrying... ($_currentServerRetries/$_maxRetriesPerServer)';
       } else {
         loadingMessage = 'Switching server...';
       }
     }
-    
+
     return Container(
       color: Colors.black,
       child: Center(
@@ -872,7 +1188,9 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(OnePieceTheme.strawHatRed),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                OnePieceTheme.strawHatRed,
+              ),
             ),
             const SizedBox(height: 16),
             Text(
@@ -902,7 +1220,11 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: OnePieceTheme.strawHatRed),
+            const Icon(
+              Icons.error_outline,
+              size: 48,
+              color: OnePieceTheme.strawHatRed,
+            ),
             const SizedBox(height: 12),
             Text(
               'Failed to load video',
@@ -911,7 +1233,10 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
             const SizedBox(height: 8),
             Text(
               _errorMessage,
-              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 12,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -945,9 +1270,47 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   }
 
   Widget _buildVideoPlayer() {
-    return Video(
-      controller: _videoController,
-      controls: NoVideoControls, // We use custom controls
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Video(
+          controller: _videoController,
+          controls: NoVideoControls, // We use custom controls
+        ),
+        // Buffering indicator overlay - shows when video is buffering during playback
+        if (_isBuffering && !_isLoading)
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      OnePieceTheme.strawHatRed,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Buffering...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -1011,7 +1374,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
     final serverName = stream?.serverName ?? 'Unknown';
     final subStreams = _subStreamData?.streams ?? [];
     final dubStreams = _dubStreamData?.streams ?? [];
-    
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1063,7 +1426,10 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                   // Offline badge
                   if (widget.offlineFilePath != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       margin: const EdgeInsets.only(right: 8),
                       decoration: BoxDecoration(
                         color: Colors.green,
@@ -1080,11 +1446,18 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
             // Server controls row
             if (widget.offlineFilePath == null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
                 child: Row(
                   children: [
                     // Current server info
-                    Icon(Icons.dns, color: OnePieceTheme.strawHatGold, size: 18),
+                    Icon(
+                      Icons.dns,
+                      color: OnePieceTheme.strawHatGold,
+                      size: 18,
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       serverName,
@@ -1143,21 +1516,23 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
   Widget _buildTypeToggle(String label, String type, int count) {
     final isSelected = _selectedServerType == type;
     final isDisabled = count == 0;
-    
+
     return GestureDetector(
-      onTap: isDisabled ? null : () {
-        if (_selectedServerType != type) {
-          setState(() {
-            _selectedServerType = type;
-            _selectedServerIndex = 0;
-            _isLoading = true;
-            _currentServerRetries = 0;
-            _totalServersSwitched = 0;
-          });
-          _initializePlayer();
-          _startHideControlsTimer();
-        }
-      },
+      onTap: isDisabled
+          ? null
+          : () {
+              if (_selectedServerType != type) {
+                setState(() {
+                  _selectedServerType = type;
+                  _selectedServerIndex = 0;
+                  _isLoading = true;
+                  _currentServerRetries = 0;
+                  _totalServersSwitched = 0;
+                });
+                _initializePlayer();
+                _startHideControlsTimer();
+              }
+            },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
@@ -1167,11 +1542,11 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
         child: Text(
           '$label ($count)',
           style: TextStyle(
-            color: isDisabled 
-                ? Colors.white.withOpacity(0.3) 
-                : isSelected 
-                    ? Colors.white 
-                    : Colors.white.withOpacity(0.7),
+            color: isDisabled
+                ? Colors.white.withOpacity(0.3)
+                : isSelected
+                ? Colors.white
+                : Colors.white.withOpacity(0.7),
             fontSize: 11,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
@@ -1193,8 +1568,12 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
   Widget _buildBottomControls() {
     final stream = _getCurrentStream();
-    final subtitles = stream?.subtitles ?? [];
-    
+    final onlineSubtitles = stream?.subtitles ?? [];
+
+    // Check if we have subtitles available (offline or online)
+    final hasSubtitles =
+        _offlineSubtitlesList.isNotEmpty || onlineSubtitles.isNotEmpty;
+
     final progress = _duration.inMilliseconds > 0
         ? _position.inMilliseconds / _duration.inMilliseconds
         : 0.0;
@@ -1240,18 +1619,25 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                       SliderTheme(
                         data: SliderTheme.of(context).copyWith(
                           trackHeight: 4,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 8,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 16,
+                          ),
                           activeTrackColor: OnePieceTheme.strawHatRed,
                           inactiveTrackColor: Colors.transparent,
                           thumbColor: OnePieceTheme.strawHatRed,
-                          overlayColor: OnePieceTheme.strawHatRed.withOpacity(0.3),
+                          overlayColor: OnePieceTheme.strawHatRed.withOpacity(
+                            0.3,
+                          ),
                         ),
                         child: Slider(
                           value: progress.clamp(0.0, 1.0),
                           onChanged: (value) {
                             final newPosition = Duration(
-                              milliseconds: (value * _duration.inMilliseconds).round(),
+                              milliseconds: (value * _duration.inMilliseconds)
+                                  .round(),
                             );
                             _player.seek(newPosition);
                             _startHideControlsTimer();
@@ -1287,19 +1673,31 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                 ),
                 // Rewind 10s
                 IconButton(
-                  icon: const Icon(Icons.replay_10, color: Colors.white, size: 28),
+                  icon: const Icon(
+                    Icons.replay_10,
+                    color: Colors.white,
+                    size: 28,
+                  ),
                   onPressed: () {
                     final newPosition = _position - const Duration(seconds: 10);
-                    _player.seek(newPosition < Duration.zero ? Duration.zero : newPosition);
+                    _player.seek(
+                      newPosition < Duration.zero ? Duration.zero : newPosition,
+                    );
                     _startHideControlsTimer();
                   },
                 ),
                 // Forward 10s
                 IconButton(
-                  icon: const Icon(Icons.forward_10, color: Colors.white, size: 28),
+                  icon: const Icon(
+                    Icons.forward_10,
+                    color: Colors.white,
+                    size: 28,
+                  ),
                   onPressed: () {
                     final newPosition = _position + const Duration(seconds: 10);
-                    _player.seek(newPosition > _duration ? _duration : newPosition);
+                    _player.seek(
+                      newPosition > _duration ? _duration : newPosition,
+                    );
                     _startHideControlsTimer();
                   },
                 ),
@@ -1307,15 +1705,21 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                 IconButton(
                   icon: Icon(
                     _subtitlesEnabled ? Icons.subtitles : Icons.subtitles_off,
-                    color: subtitles.isNotEmpty 
-                        ? (_subtitlesEnabled ? OnePieceTheme.strawHatGold : Colors.white)
+                    color: hasSubtitles
+                        ? (_subtitlesEnabled
+                              ? OnePieceTheme.strawHatGold
+                              : Colors.white)
                         : Colors.white.withOpacity(0.3),
                     size: 28,
                   ),
-                  onPressed: subtitles.isNotEmpty ? () {
-                    setState(() => _showSubtitlePanel = !_showSubtitlePanel);
-                    _startHideControlsTimer();
-                  } : null,
+                  onPressed: hasSubtitles
+                      ? () {
+                          setState(
+                            () => _showSubtitlePanel = !_showSubtitlePanel,
+                          );
+                          _startHideControlsTimer();
+                        }
+                      : null,
                 ),
                 // Playback speed
                 PopupMenuButton<double>(
@@ -1326,12 +1730,48 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                     _startHideControlsTimer();
                   },
                   itemBuilder: (context) => [
-                    PopupMenuItem(value: 0.5, child: Text('0.5x', style: TextStyle(color: Colors.white))),
-                    PopupMenuItem(value: 0.75, child: Text('0.75x', style: TextStyle(color: Colors.white))),
-                    PopupMenuItem(value: 1.0, child: Text('1.0x', style: TextStyle(color: Colors.white))),
-                    PopupMenuItem(value: 1.25, child: Text('1.25x', style: TextStyle(color: Colors.white))),
-                    PopupMenuItem(value: 1.5, child: Text('1.5x', style: TextStyle(color: Colors.white))),
-                    PopupMenuItem(value: 2.0, child: Text('2.0x', style: TextStyle(color: Colors.white))),
+                    PopupMenuItem(
+                      value: 0.5,
+                      child: Text(
+                        '0.5x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 0.75,
+                      child: Text(
+                        '0.75x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 1.0,
+                      child: Text(
+                        '1.0x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 1.25,
+                      child: Text(
+                        '1.25x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 1.5,
+                      child: Text(
+                        '1.5x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 2.0,
+                      child: Text(
+                        '2.0x',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
                   ],
                 ),
               ],
@@ -1344,7 +1784,15 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
 
   Widget _buildSubtitleSettingsPanel() {
     final stream = _getCurrentStream();
-    final subtitles = stream?.subtitles ?? [];
+    final onlineSubtitles = stream?.subtitles ?? [];
+
+    // Use offline subtitles if available, otherwise use online subtitles
+    final isOfflineMode =
+        widget.offlineFilePath != null && _offlineSubtitlesList.isNotEmpty;
+    final subtitleCount = isOfflineMode
+        ? _offlineSubtitlesList.length
+        : onlineSubtitles.length;
+    final hasSubtitles = subtitleCount > 0;
 
     return Positioned.fill(
       child: GestureDetector(
@@ -1369,36 +1817,67 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                     // Header
                     Row(
                       children: [
-                        const Icon(Icons.subtitles, color: OnePieceTheme.strawHatGold),
+                        const Icon(
+                          Icons.subtitles,
+                          color: OnePieceTheme.strawHatGold,
+                        ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'Subtitle Settings',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Subtitle Settings',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (isOfflineMode)
+                                Text(
+                                  'Offline Mode • ${subtitleCount} subtitle(s)',
+                                  style: TextStyle(
+                                    color: Colors.green.shade300,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                        const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.white),
-                          onPressed: () => setState(() => _showSubtitlePanel = false),
+                          onPressed: () =>
+                              setState(() => _showSubtitlePanel = false),
                         ),
                       ],
                     ),
                     const Divider(color: Colors.white24),
-                    
+
                     // Enable/Disable toggle
                     SwitchListTile(
-                      title: const Text('Show Subtitles', style: TextStyle(color: Colors.white)),
+                      title: const Text(
+                        'Show Subtitles',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       value: _subtitlesEnabled,
                       activeThumbColor: OnePieceTheme.strawHatRed,
-                      onChanged: (value) => setState(() => _subtitlesEnabled = value),
+                      onChanged: (value) {
+                        setState(() {
+                          _subtitlesEnabled = value;
+                          if (!value) {
+                            _currentSubtitleText = '';
+                          }
+                        });
+                      },
                     ),
-                    
+
                     // Font size slider
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -1425,54 +1904,100 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                             divisions: 10,
                             activeColor: OnePieceTheme.strawHatRed,
                             inactiveColor: Colors.white24,
-                            onChanged: (value) => setState(() => _subtitleFontSize = value),
+                            onChanged: (value) =>
+                                setState(() => _subtitleFontSize = value),
                           ),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Small', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
-                              Text('Large', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10)),
+                              Text(
+                                'Small',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 10,
+                                ),
+                              ),
+                              Text(
+                                'Large',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 10,
+                                ),
+                              ),
                             ],
                           ),
                         ],
                       ),
                     ),
-                    
+
                     const Divider(color: Colors.white24),
-                    
+
                     // Subtitle language selection
-                    if (subtitles.isNotEmpty) ...[
+                    if (hasSubtitles) ...[
                       const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         child: Text(
                           'Language',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       SizedBox(
-                        height: 120,
+                        height: 160,
                         child: ListView.builder(
-                          itemCount: subtitles.length,
+                          itemCount: subtitleCount,
                           itemBuilder: (context, index) {
-                            final sub = subtitles[index];
                             final isSelected = _selectedSubtitleIndex == index;
+
+                            // Get label based on mode
+                            String label;
+                            if (isOfflineMode) {
+                              label = _offlineSubtitlesList[index].label;
+                            } else {
+                              label = onlineSubtitles[index].label;
+                            }
+
                             return ListTile(
                               dense: true,
                               leading: Icon(
-                                isSelected ? Icons.check_circle : Icons.circle_outlined,
-                                color: isSelected ? OnePieceTheme.strawHatGold : Colors.white54,
+                                isSelected
+                                    ? Icons.check_circle
+                                    : Icons.circle_outlined,
+                                color: isSelected
+                                    ? OnePieceTheme.strawHatGold
+                                    : Colors.white54,
                                 size: 20,
                               ),
                               title: Text(
-                                sub.label,
+                                label,
                                 style: TextStyle(
-                                  color: isSelected ? OnePieceTheme.strawHatGold : Colors.white,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  color: isSelected
+                                      ? OnePieceTheme.strawHatGold
+                                      : Colors.white,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                               ),
+                              trailing: isOfflineMode
+                                  ? Icon(
+                                      Icons.download_done,
+                                      color: Colors.green.shade400,
+                                      size: 16,
+                                    )
+                                  : null,
                               onTap: () {
                                 setState(() => _selectedSubtitleIndex = index);
-                                _loadSubtitles(subtitles);
+                                if (isOfflineMode) {
+                                  _loadOfflineSubtitle(index);
+                                } else {
+                                  _loadSubtitles(onlineSubtitles);
+                                }
                               },
                             );
                           },
@@ -1481,9 +2006,24 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                     ] else
                       Padding(
                         padding: const EdgeInsets.all(16),
-                        child: Text(
-                          'No subtitles available for this stream',
-                          style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.subtitles_off,
+                              color: Colors.white.withOpacity(0.4),
+                              size: 40,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              widget.offlineFilePath != null
+                                  ? 'No subtitles downloaded for this episode'
+                                  : 'No subtitles available for this stream',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ),
                       ),
                   ],
@@ -1527,13 +2067,18 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                   const SizedBox(height: 16),
                   // SUB servers
                   if (subStreams.isNotEmpty) ...[
-                    const Text('SUB', style: TextStyle(color: OnePieceTheme.strawHatGold)),
+                    const Text(
+                      'SUB',
+                      style: TextStyle(color: OnePieceTheme.strawHatGold),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: List.generate(subStreams.length, (i) {
-                        final isSelected = _selectedServerType == 'sub' && _selectedServerIndex == i;
+                        final isSelected =
+                            _selectedServerType == 'sub' &&
+                            _selectedServerIndex == i;
                         return ChoiceChip(
                           label: Text(subStreams[i].serverName),
                           selected: isSelected,
@@ -1549,13 +2094,18 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                   ],
                   // DUB servers
                   if (dubStreams.isNotEmpty) ...[
-                    const Text('DUB', style: TextStyle(color: OnePieceTheme.strawHatGold)),
+                    const Text(
+                      'DUB',
+                      style: TextStyle(color: OnePieceTheme.strawHatGold),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: List.generate(dubStreams.length, (i) {
-                        final isSelected = _selectedServerType == 'dub' && _selectedServerIndex == i;
+                        final isSelected =
+                            _selectedServerType == 'dub' &&
+                            _selectedServerIndex == i;
                         return ChoiceChip(
                           label: Text(dubStreams[i].serverName),
                           selected: isSelected,

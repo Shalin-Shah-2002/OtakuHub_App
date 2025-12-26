@@ -3,6 +3,33 @@ import 'dart:convert';
 /// Status of a download
 enum DownloadStatus { pending, downloading, completed, failed, paused }
 
+/// Model for a downloaded subtitle
+class DownloadedSubtitle {
+  final String label;
+  final String language;
+  final String filePath;
+
+  DownloadedSubtitle({
+    required this.label,
+    required this.language,
+    required this.filePath,
+  });
+
+  factory DownloadedSubtitle.fromJson(Map<String, dynamic> json) {
+    return DownloadedSubtitle(
+      label: json['label'] as String? ?? 'Unknown',
+      language: json['language'] as String? ?? 'en',
+      filePath: json['filePath'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'label': label,
+    'language': language,
+    'filePath': filePath,
+  };
+}
+
 /// Model for a downloaded episode
 class DownloadItem {
   final String animeSlug;
@@ -19,6 +46,7 @@ class DownloadItem {
   double progress; // 0.0 to 1.0
   int? fileSize; // in bytes
   String? errorMessage;
+  final List<DownloadedSubtitle> subtitles; // Downloaded subtitle files
 
   DownloadItem({
     required this.animeSlug,
@@ -35,6 +63,7 @@ class DownloadItem {
     this.progress = 0.0,
     this.fileSize,
     this.errorMessage,
+    this.subtitles = const [],
   });
 
   /// Unique key for this download
@@ -60,6 +89,13 @@ class DownloadItem {
       progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
       fileSize: json['fileSize'] as int?,
       errorMessage: json['errorMessage'] as String?,
+      subtitles:
+          (json['subtitles'] as List?)
+              ?.map(
+                (s) => DownloadedSubtitle.fromJson(s as Map<String, dynamic>),
+              )
+              .toList() ??
+          [],
     );
   }
 
@@ -80,6 +116,7 @@ class DownloadItem {
       'progress': progress,
       'fileSize': fileSize,
       'errorMessage': errorMessage,
+      'subtitles': subtitles.map((s) => s.toJson()).toList(),
     };
   }
 
@@ -109,6 +146,7 @@ class DownloadItem {
     double? progress,
     int? fileSize,
     String? errorMessage,
+    List<DownloadedSubtitle>? subtitles,
   }) {
     return DownloadItem(
       animeSlug: animeSlug ?? this.animeSlug,
@@ -125,6 +163,7 @@ class DownloadItem {
       progress: progress ?? this.progress,
       fileSize: fileSize ?? this.fileSize,
       errorMessage: errorMessage ?? this.errorMessage,
+      subtitles: subtitles ?? this.subtitles,
     );
   }
 
