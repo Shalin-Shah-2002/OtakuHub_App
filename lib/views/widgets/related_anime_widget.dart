@@ -55,7 +55,7 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
     for (final pattern in patterns) {
       baseTitle = baseTitle.replaceAll(pattern, '');
     }
-    
+
     return baseTitle.trim();
   }
 
@@ -77,7 +77,7 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
 
       // Get the base title for searching
       final baseTitle = _extractBaseTitle(title);
-      
+
       // Search for related anime
       final response = await _apiService.searchAnime(
         SearchAnimeRequest(keyword: baseTitle, page: 1),
@@ -87,18 +87,26 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
         // Filter and sort results
         final currentSlug = widget.anime.slug ?? '';
         final related = response.data!
-            .where((anime) => 
-                anime.slug != currentSlug && // Exclude current anime
-                _isRelated(anime.title ?? '', title, baseTitle))
+            .where(
+              (anime) =>
+                  anime.slug != currentSlug && // Exclude current anime
+                  _isRelated(anime.title ?? '', title, baseTitle),
+            )
             .toList();
-        
+
         // Sort: TV series first, then movies, then OVAs, etc.
         related.sort((a, b) {
-          final typeOrder = {'TV': 0, 'Movie': 1, 'OVA': 2, 'ONA': 3, 'Special': 4};
+          final typeOrder = {
+            'TV': 0,
+            'Movie': 1,
+            'OVA': 2,
+            'ONA': 3,
+            'Special': 4,
+          };
           final aOrder = typeOrder[a.type] ?? 5;
           final bOrder = typeOrder[b.type] ?? 5;
           if (aOrder != bOrder) return aOrder.compareTo(bOrder);
-          
+
           // Then sort by title to group seasons together
           return (a.title ?? '').compareTo(b.title ?? '');
         });
@@ -125,13 +133,13 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
   bool _isRelated(String otherTitle, String currentTitle, String baseTitle) {
     final otherLower = otherTitle.toLowerCase();
     final baseLower = baseTitle.toLowerCase();
-    
+
     // Must contain the base title
     if (!otherLower.contains(baseLower) && baseLower.length > 3) {
       // Try partial match for longer titles
       final words = baseLower.split(' ').where((w) => w.length > 3).toList();
       if (words.length < 2) return false;
-      
+
       int matchCount = 0;
       for (final word in words) {
         if (otherLower.contains(word)) matchCount++;
@@ -139,14 +147,14 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
       // Need at least 60% word match
       if (matchCount < words.length * 0.6) return false;
     }
-    
+
     return true;
   }
 
   String _getTypeLabel(AnimeModel anime) {
     final type = anime.type ?? 'Unknown';
     final title = (anime.title ?? '').toLowerCase();
-    
+
     // Try to determine if it's a specific season
     if (title.contains('season 2') || title.contains('2nd season')) {
       return 'Season 2';
@@ -173,7 +181,7 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
     } else if (type == 'Special') {
       return 'Special';
     }
-    
+
     return type;
   }
 
@@ -202,9 +210,7 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
     if (_isLoading) {
       return const Padding(
         padding: EdgeInsets.all(16),
-        child: Center(
-          child: CircularProgressIndicator(),
-        ),
+        child: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -227,9 +233,9 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
               const SizedBox(width: 8),
               Text(
                 'Related Seasons & Movies',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(width: 8),
               Container(
@@ -260,7 +266,7 @@ class _RelatedAnimeWidgetState extends State<RelatedAnimeWidget> {
               final anime = _relatedAnime[index];
               final typeLabel = _getTypeLabel(anime);
               final typeColor = _getTypeColor(typeLabel);
-              
+
               return _RelatedAnimeCard(
                 anime: anime,
                 typeLabel: typeLabel,

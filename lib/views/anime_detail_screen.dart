@@ -360,9 +360,7 @@ class _AnimeDetailScreenState extends State<AnimeDetailScreen> {
             ),
 
             // Related Seasons & Movies Section
-            SliverToBoxAdapter(
-              child: RelatedAnimeWidget(anime: anime),
-            ),
+            SliverToBoxAdapter(child: RelatedAnimeWidget(anime: anime)),
 
             // Episodes Section with Grid/Range Selector
             if (controller.isLoadingEpisodes.value &&
@@ -400,7 +398,8 @@ class _AnimeDetailScreenState extends State<AnimeDetailScreen> {
                         _showEpisodeLinkDialog(episode);
                       }
                     },
-                    onEpisodeLongPress: (episode) => _showEpisodeLinkDialog(episode),
+                    onEpisodeLongPress: (episode) =>
+                        _showEpisodeLinkDialog(episode),
                   );
                 }),
               ),

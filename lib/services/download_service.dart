@@ -22,9 +22,9 @@ class DownloadService extends GetxService {
 
   late SharedPreferences _prefs;
   final ApiService _apiService = ApiService();
-  
+
   // Notification plugin for background download notifications
-  final FlutterLocalNotificationsPlugin _notificationsPlugin = 
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
 
@@ -52,29 +52,31 @@ class DownloadService extends GetxService {
     );
     return this;
   }
-  
+
   /// Initialize notifications for background downloads
   Future<void> _initNotifications() async {
     if (_notificationsInitialized) return;
-    
+
     try {
-      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const androidSettings = AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
+      );
       const iosSettings = DarwinInitializationSettings(
         requestAlertPermission: true,
         requestBadgePermission: true,
         requestSoundPermission: false,
       );
-      
+
       const initSettings = InitializationSettings(
         android: androidSettings,
         iOS: iosSettings,
       );
-      
+
       await _notificationsPlugin.initialize(
         initSettings,
         onDidReceiveNotificationResponse: _onNotificationTapped,
       );
-      
+
       // Create notification channel for Android
       if (!kIsWeb && Platform.isAndroid) {
         const channel = AndroidNotificationChannel(
@@ -86,26 +88,31 @@ class DownloadService extends GetxService {
           enableVibration: false,
           showBadge: false,
         );
-        
+
         await _notificationsPlugin
             .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
+              AndroidFlutterLocalNotificationsPlugin
+            >()
             ?.createNotificationChannel(channel);
       }
-      
+
       _notificationsInitialized = true;
       logger.i(_tag, 'Notifications initialized');
     } catch (e, stackTrace) {
-      logger.e(_tag, 'Failed to initialize notifications', 
-          error: e, stackTrace: stackTrace);
+      logger.e(
+        _tag,
+        'Failed to initialize notifications',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
-  
+
   void _onNotificationTapped(NotificationResponse response) {
     // Handle notification tap - could open downloads screen
     logger.d(_tag, 'Notification tapped: ${response.payload}');
   }
-  
+
   /// Show/update download progress notification
   Future<void> _showDownloadNotification({
     required String title,
@@ -116,7 +123,7 @@ class DownloadService extends GetxService {
     bool ongoing = true,
   }) async {
     if (!_notificationsInitialized) return;
-    
+
     try {
       final androidDetails = AndroidNotificationDetails(
         _downloadChannelId,
@@ -135,18 +142,18 @@ class DownloadService extends GetxService {
         onlyAlertOnce: true,
         category: AndroidNotificationCategory.progress,
       );
-      
+
       const iosDetails = DarwinNotificationDetails(
         presentAlert: false,
         presentBadge: false,
         presentSound: false,
       );
-      
+
       final details = NotificationDetails(
         android: androidDetails,
         iOS: iosDetails,
       );
-      
+
       await _notificationsPlugin.show(
         _downloadNotificationId,
         title,
@@ -157,7 +164,7 @@ class DownloadService extends GetxService {
       logger.w(_tag, 'Failed to show notification: $e');
     }
   }
-  
+
   /// Cancel download notification
   Future<void> _cancelDownloadNotification() async {
     if (!_notificationsInitialized) return;
@@ -167,11 +174,11 @@ class DownloadService extends GetxService {
       logger.w(_tag, 'Failed to cancel notification: $e');
     }
   }
-  
+
   /// Show download complete notification
   Future<void> _showDownloadCompleteNotification(String episodeTitle) async {
     if (!_notificationsInitialized) return;
-    
+
     try {
       const androidDetails = AndroidNotificationDetails(
         _downloadChannelId,
@@ -182,18 +189,18 @@ class DownloadService extends GetxService {
         autoCancel: true,
         playSound: true,
       );
-      
+
       const iosDetails = DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
       );
-      
+
       const details = NotificationDetails(
         android: androidDetails,
         iOS: iosDetails,
       );
-      
+
       await _notificationsPlugin.show(
         _downloadNotificationId + 1, // Different ID for completion
         'Download Complete',
@@ -505,12 +512,13 @@ class DownloadService extends GetxService {
     final download = downloads[downloadIndex];
     final dir = await _downloadsDir;
     final filePath = '${dir.path}/$filename.mp4';
-    
-    final episodeTitle = '${download.animeTitle} - Episode ${download.episodeNumber}';
+
+    final episodeTitle =
+        '${download.animeTitle} - Episode ${download.episodeNumber}';
 
     final cancelToken = CancelToken();
     _dioCancelTokens[key] = cancelToken;
-    
+
     // Show initial notification
     await _showDownloadNotification(
       title: 'Downloading...',
@@ -532,7 +540,7 @@ class DownloadService extends GetxService {
           sendTimeout: const Duration(minutes: 2),
         ),
       );
-      
+
       int lastNotificationUpdate = 0;
 
       await downloadDio.download(
@@ -550,7 +558,7 @@ class DownloadService extends GetxService {
                 fileSize: total,
               );
             }
-            
+
             // Update notification every 2% progress
             final progressPercent = (progress * 100).toInt();
             if (progressPercent > lastNotificationUpdate + 2) {
@@ -568,7 +576,7 @@ class DownloadService extends GetxService {
             if (idx != -1) {
               downloads[idx] = downloads[idx].copyWith(fileSize: received);
             }
-            
+
             // Update notification with size
             if (received - lastNotificationUpdate > 5 * 1024 * 1024) {
               lastNotificationUpdate = received;
@@ -578,7 +586,7 @@ class DownloadService extends GetxService {
                 indeterminate: true,
               );
             }
-            
+
             // Log progress periodically
             if (received % (5 * 1024 * 1024) < 100000) {
               // Every ~5MB
@@ -612,7 +620,7 @@ class DownloadService extends GetxService {
       await _saveDownloads();
 
       logger.i(_tag, '✅ Video download complete: ${_formatFileSize(fileSize)}');
-      
+
       // Show completion notification
       await _cancelDownloadNotification();
       await _showDownloadCompleteNotification(episodeTitle);
@@ -807,7 +815,8 @@ class DownloadService extends GetxService {
     if (labelLower.contains('indonesian')) return 'id';
     if (labelLower.contains('malay')) return 'ms';
     if (labelLower.contains('thai') || labelLower.contains('ไทย')) return 'th';
-    if (labelLower.contains('vietnamese') || labelLower.contains('tiếng việt')) {
+    if (labelLower.contains('vietnamese') ||
+        labelLower.contains('tiếng việt')) {
       return 'vi';
     }
     if (labelLower.contains('turkish') || labelLower.contains('türkçe')) {
