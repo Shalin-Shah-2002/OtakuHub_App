@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,13 +12,21 @@ import '../models/response/episode_model.dart';
 import '../utils/logger_service.dart';
 import 'api_service.dart';
 
-/// Service for managing episode downloads
+/// Service for managing episode downloads with background support
 class DownloadService extends GetxService {
   static const String _tag = 'DownloadService';
   static const String _downloadsKey = 'downloads';
+  static const int _downloadNotificationId = 1001;
+  static const String _downloadChannelId = 'download_channel';
+  static const String _downloadChannelName = 'Downloads';
 
   late SharedPreferences _prefs;
   final ApiService _apiService = ApiService();
+  
+  // Notification plugin for background download notifications
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = 
+      FlutterLocalNotificationsPlugin();
+  bool _notificationsInitialized = false;
 
   // Reactive list for UI updates
   final RxList<DownloadItem> downloads = <DownloadItem>[].obs;
@@ -35,11 +45,164 @@ class DownloadService extends GetxService {
     logger.i(_tag, 'Initializing DownloadService');
     _prefs = await SharedPreferences.getInstance();
     await _loadDownloads();
+    await _initNotifications();
     logger.i(
       _tag,
       'DownloadService initialized - Downloads: ${downloads.length}',
     );
     return this;
+  }
+  
+  /// Initialize notifications for background downloads
+  Future<void> _initNotifications() async {
+    if (_notificationsInitialized) return;
+    
+    try {
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: false,
+      );
+      
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+      
+      await _notificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onNotificationTapped,
+      );
+      
+      // Create notification channel for Android
+      if (!kIsWeb && Platform.isAndroid) {
+        const channel = AndroidNotificationChannel(
+          _downloadChannelId,
+          _downloadChannelName,
+          description: 'Shows download progress',
+          importance: Importance.low,
+          playSound: false,
+          enableVibration: false,
+          showBadge: false,
+        );
+        
+        await _notificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(channel);
+      }
+      
+      _notificationsInitialized = true;
+      logger.i(_tag, 'Notifications initialized');
+    } catch (e, stackTrace) {
+      logger.e(_tag, 'Failed to initialize notifications', 
+          error: e, stackTrace: stackTrace);
+    }
+  }
+  
+  void _onNotificationTapped(NotificationResponse response) {
+    // Handle notification tap - could open downloads screen
+    logger.d(_tag, 'Notification tapped: ${response.payload}');
+  }
+  
+  /// Show/update download progress notification
+  Future<void> _showDownloadNotification({
+    required String title,
+    required String body,
+    int progress = 0,
+    int maxProgress = 100,
+    bool indeterminate = false,
+    bool ongoing = true,
+  }) async {
+    if (!_notificationsInitialized) return;
+    
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        _downloadChannelId,
+        _downloadChannelName,
+        channelDescription: 'Shows download progress',
+        importance: Importance.low,
+        priority: Priority.low,
+        ongoing: ongoing,
+        autoCancel: !ongoing,
+        showProgress: true,
+        maxProgress: maxProgress,
+        progress: progress,
+        indeterminate: indeterminate,
+        playSound: false,
+        enableVibration: false,
+        onlyAlertOnce: true,
+        category: AndroidNotificationCategory.progress,
+      );
+      
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: false,
+        presentBadge: false,
+        presentSound: false,
+      );
+      
+      final details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      await _notificationsPlugin.show(
+        _downloadNotificationId,
+        title,
+        body,
+        details,
+      );
+    } catch (e) {
+      logger.w(_tag, 'Failed to show notification: $e');
+    }
+  }
+  
+  /// Cancel download notification
+  Future<void> _cancelDownloadNotification() async {
+    if (!_notificationsInitialized) return;
+    try {
+      await _notificationsPlugin.cancel(_downloadNotificationId);
+    } catch (e) {
+      logger.w(_tag, 'Failed to cancel notification: $e');
+    }
+  }
+  
+  /// Show download complete notification
+  Future<void> _showDownloadCompleteNotification(String episodeTitle) async {
+    if (!_notificationsInitialized) return;
+    
+    try {
+      const androidDetails = AndroidNotificationDetails(
+        _downloadChannelId,
+        _downloadChannelName,
+        channelDescription: 'Shows download progress',
+        importance: Importance.defaultImportance,
+        priority: Priority.defaultPriority,
+        autoCancel: true,
+        playSound: true,
+      );
+      
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      await _notificationsPlugin.show(
+        _downloadNotificationId + 1, // Different ID for completion
+        'Download Complete',
+        episodeTitle,
+        details,
+      );
+    } catch (e) {
+      logger.w(_tag, 'Failed to show completion notification: $e');
+    }
   }
 
   /// Get downloads directory
@@ -342,9 +505,19 @@ class DownloadService extends GetxService {
     final download = downloads[downloadIndex];
     final dir = await _downloadsDir;
     final filePath = '${dir.path}/$filename.mp4';
+    
+    final episodeTitle = '${download.animeTitle} - Episode ${download.episodeNumber}';
 
     final cancelToken = CancelToken();
     _dioCancelTokens[key] = cancelToken;
+    
+    // Show initial notification
+    await _showDownloadNotification(
+      title: 'Downloading...',
+      body: episodeTitle,
+      progress: 0,
+      indeterminate: true,
+    );
 
     try {
       logger.i(_tag, 'Starting MP4 download to: $filePath');
@@ -359,6 +532,8 @@ class DownloadService extends GetxService {
           sendTimeout: const Duration(minutes: 2),
         ),
       );
+      
+      int lastNotificationUpdate = 0;
 
       await downloadDio.download(
         mp4Url,
@@ -375,12 +550,35 @@ class DownloadService extends GetxService {
                 fileSize: total,
               );
             }
+            
+            // Update notification every 2% progress
+            final progressPercent = (progress * 100).toInt();
+            if (progressPercent > lastNotificationUpdate + 2) {
+              lastNotificationUpdate = progressPercent;
+              _showDownloadNotification(
+                title: 'Downloading... $progressPercent%',
+                body: episodeTitle,
+                progress: progressPercent,
+                maxProgress: 100,
+              );
+            }
           } else {
             // Unknown total size - show bytes downloaded
             final idx = downloads.indexWhere((d) => d.key == key);
             if (idx != -1) {
               downloads[idx] = downloads[idx].copyWith(fileSize: received);
             }
+            
+            // Update notification with size
+            if (received - lastNotificationUpdate > 5 * 1024 * 1024) {
+              lastNotificationUpdate = received;
+              _showDownloadNotification(
+                title: 'Downloading...',
+                body: '$episodeTitle (${_formatFileSize(received)})',
+                indeterminate: true,
+              );
+            }
+            
             // Log progress periodically
             if (received % (5 * 1024 * 1024) < 100000) {
               // Every ~5MB
@@ -414,6 +612,10 @@ class DownloadService extends GetxService {
       await _saveDownloads();
 
       logger.i(_tag, '✅ Video download complete: ${_formatFileSize(fileSize)}');
+      
+      // Show completion notification
+      await _cancelDownloadNotification();
+      await _showDownloadCompleteNotification(episodeTitle);
 
       Get.snackbar(
         'Download Complete',
@@ -423,6 +625,7 @@ class DownloadService extends GetxService {
       );
     } catch (e) {
       logger.e(_tag, 'MP4 download failed', error: e);
+      await _cancelDownloadNotification();
       final file = File(filePath);
       if (await file.exists()) await file.delete();
       rethrow;
@@ -568,39 +771,54 @@ class DownloadService extends GetxService {
 
     // Common language mappings
     if (labelLower.contains('english')) return 'en';
-    if (labelLower.contains('spanish') || labelLower.contains('español'))
+    if (labelLower.contains('spanish') || labelLower.contains('español')) {
       return 'es';
-    if (labelLower.contains('french') || labelLower.contains('français'))
+    }
+    if (labelLower.contains('french') || labelLower.contains('français')) {
       return 'fr';
-    if (labelLower.contains('german') || labelLower.contains('deutsch'))
+    }
+    if (labelLower.contains('german') || labelLower.contains('deutsch')) {
       return 'de';
-    if (labelLower.contains('portuguese') || labelLower.contains('português'))
+    }
+    if (labelLower.contains('portuguese') || labelLower.contains('português')) {
       return 'pt';
-    if (labelLower.contains('italian') || labelLower.contains('italiano'))
+    }
+    if (labelLower.contains('italian') || labelLower.contains('italiano')) {
       return 'it';
-    if (labelLower.contains('russian') || labelLower.contains('русский'))
+    }
+    if (labelLower.contains('russian') || labelLower.contains('русский')) {
       return 'ru';
-    if (labelLower.contains('japanese') || labelLower.contains('日本語'))
+    }
+    if (labelLower.contains('japanese') || labelLower.contains('日本語')) {
       return 'ja';
-    if (labelLower.contains('korean') || labelLower.contains('한국어'))
+    }
+    if (labelLower.contains('korean') || labelLower.contains('한국어')) {
       return 'ko';
-    if (labelLower.contains('chinese') || labelLower.contains('中文'))
+    }
+    if (labelLower.contains('chinese') || labelLower.contains('中文')) {
       return 'zh';
-    if (labelLower.contains('arabic') || labelLower.contains('العربية'))
+    }
+    if (labelLower.contains('arabic') || labelLower.contains('العربية')) {
       return 'ar';
-    if (labelLower.contains('hindi') || labelLower.contains('हिन्दी'))
+    }
+    if (labelLower.contains('hindi') || labelLower.contains('हिन्दी')) {
       return 'hi';
+    }
     if (labelLower.contains('indonesian')) return 'id';
     if (labelLower.contains('malay')) return 'ms';
     if (labelLower.contains('thai') || labelLower.contains('ไทย')) return 'th';
-    if (labelLower.contains('vietnamese') || labelLower.contains('tiếng việt'))
+    if (labelLower.contains('vietnamese') || labelLower.contains('tiếng việt')) {
       return 'vi';
-    if (labelLower.contains('turkish') || labelLower.contains('türkçe'))
+    }
+    if (labelLower.contains('turkish') || labelLower.contains('türkçe')) {
       return 'tr';
-    if (labelLower.contains('polish') || labelLower.contains('polski'))
+    }
+    if (labelLower.contains('polish') || labelLower.contains('polski')) {
       return 'pl';
-    if (labelLower.contains('dutch') || labelLower.contains('nederlands'))
+    }
+    if (labelLower.contains('dutch') || labelLower.contains('nederlands')) {
       return 'nl';
+    }
 
     return 'unknown';
   }

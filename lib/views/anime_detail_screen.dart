@@ -6,6 +6,8 @@ import '../services/storage_service.dart';
 import '../utils/logger_service.dart';
 import '../utils/one_piece_theme.dart';
 import 'stream_options_sheet.dart';
+import 'widgets/episode_grid_widget.dart';
+import 'widgets/related_anime_widget.dart';
 
 class AnimeDetailScreen extends StatefulWidget {
   final String slug;
@@ -352,28 +354,17 @@ class _AnimeDetailScreenState extends State<AnimeDetailScreen> {
                       ),
                       const SizedBox(height: 24),
                     ],
-
-                    // Episodes Section
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Episodes',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        Text(
-                          '${controller.episodes.length} episodes',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
                   ],
                 ),
               ),
             ),
 
-            // Episodes List
+            // Related Seasons & Movies Section
+            SliverToBoxAdapter(
+              child: RelatedAnimeWidget(anime: anime),
+            ),
+
+            // Episodes Section with Grid/Range Selector
             if (controller.isLoadingEpisodes.value &&
                 controller.episodes.isEmpty)
               const SliverToBoxAdapter(
@@ -394,88 +385,26 @@ class _AnimeDetailScreenState extends State<AnimeDetailScreen> {
                 ),
               )
             else
-              SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  final episode = controller.episodes[index];
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: episode.isFiller == true
-                            ? Colors.orange
-                            : Theme.of(context).colorScheme.primary,
-                        child: Text(
-                          '${episode.number ?? '?'}',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      title: Text(
-                        episode.title ?? 'Episode ${episode.number}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: episode.japaneseTitle != null
-                          ? Text(
-                              episode.japaneseTitle!,
-                              style: const TextStyle(fontSize: 12),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            )
-                          : null,
-                      trailing: SizedBox(
-                        width: episode.isFiller == true ? 140 : 96,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            if (episode.isFiller == true)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text(
-                                  'Filler',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            // Play button
-                            IconButton(
-                              icon: Icon(
-                                Icons.play_circle_filled,
-                                color: Theme.of(context).colorScheme.primary,
-                                size: 32,
-                              ),
-                              onPressed:
-                                  episode.url != null && episode.url!.isNotEmpty
-                                  ? () => _playEpisode(episode)
-                                  : null,
-                              tooltip: 'Play Episode',
-                            ),
-                            // Info button
-                            IconButton(
-                              icon: const Icon(Icons.info_outline),
-                              onPressed: () => _showEpisodeLinkDialog(episode),
-                              tooltip: 'Episode Info',
-                            ),
-                          ],
-                        ),
-                      ),
-                      onTap: () => _showEpisodeLinkDialog(episode),
-                    ),
+              SliverToBoxAdapter(
+                child: Obx(() {
+                  final lastWatched = storageService.getLastWatchedEpisode(
+                    anime.slug ?? '',
                   );
-                }, childCount: controller.episodes.length),
+                  return EpisodeGridWidget(
+                    episodes: controller.episodes,
+                    lastWatchedEpisode: lastWatched?.episodeNumber,
+                    onEpisodeTap: (episode) {
+                      if (episode.url != null && episode.url!.isNotEmpty) {
+                        _playEpisode(episode);
+                      } else {
+                        _showEpisodeLinkDialog(episode);
+                      }
+                    },
+                    onEpisodeLongPress: (episode) => _showEpisodeLinkDialog(episode),
+                  );
+                }),
               ),
+
             // Bottom padding
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],

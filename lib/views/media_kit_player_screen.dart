@@ -1865,7 +1865,7 @@ class _MediaKitPlayerScreenState extends State<MediaKitPlayerScreen> {
                               ),
                               if (isOfflineMode)
                                 Text(
-                                  'Offline Mode • ${subtitleCount} subtitle(s)',
+                                  'Offline Mode • $subtitleCount subtitle(s)',
                                   style: TextStyle(
                                     color: Colors.green.shade300,
                                     fontSize: 12,

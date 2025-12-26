@@ -69,6 +69,12 @@ dependencies:
   
   # Keep screen awake during video playback
   wakelock_plus: ^1.2.8
+  
+  # Background service for downloads
+  flutter_local_notifications: ^18.0.1
+  
+  # Package info for app version
+  package_info_plus: ^8.3.0
 
 dev_dependencies:
   flutter_test:

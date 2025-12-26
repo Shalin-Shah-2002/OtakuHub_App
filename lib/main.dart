@@ -15,7 +15,6 @@ void main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      
       // Initialize media_kit for video playback
       MediaKit.ensureInitialized();
 
